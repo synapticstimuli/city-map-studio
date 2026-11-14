@@ -291,3 +291,45 @@ footer {
     padding-top: 12px;
   }
 }
+
+/* Print Settings */
+
+.orientation-setting {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.orientation-setting select {
+  width: 100%;
+  padding: 11px 10px;
+  background: #f8faf9;
+  border: 1px solid #dce3df;
+  border-radius: 8px;
+  color: #1d2b25;
+  font: inherit;
+}
+
+/* ==========================================
+   LIVE PRINT PREVIEW
+   ========================================== */
+
+/* The white page holding the SVG artwork */
+.map-mount {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  background: white;
+  transition:
+    width 0.2s ease,
+    height 0.2s ease;
+}
+
+/* Keep the map proportional and leave
+   5% space around each side */
+.map-mount svg {
+  width: 90%;
+  height: 90%;
+  display: block;
+}

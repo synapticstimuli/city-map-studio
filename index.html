@@ -77,6 +77,32 @@
               value="0.12"
           /></label>
         </div>
+
+        <div class="section">
+          <h2>Print settings</h2>
+
+          <label class="field" for="paperSize">
+            Paper size
+            <select id="paperSize">
+              <option value="A3">A3 (297 × 420 mm)</option>
+              <option value="11x14">11 × 14 inches</option>
+              <option value="16x20">16 × 20 inches</option>
+              <option value="18x24">18 × 24 inches</option>
+              <option value="24x36">24 × 36 inches</option>
+            </select>
+          </label>
+
+          <div class="orientation-setting">
+            <label for="orientation">Orientation</label>
+            <select id="orientation">
+              <option value="landscape">Landscape</option>
+              <option value="portrait">Portrait</option>
+            </select>
+          </div>
+
+          <p class="note" id="paperDimensions">420 × 297 mm</p>
+        </div>
+
         <div class="section">
           <h2>Export</h2>
           <button id="resetStyle" class="secondary" type="button">
@@ -86,8 +112,8 @@
             Download Styled SVG <span>↗</span>
           </button>
           <p class="note">
-            Original vector paths remain editable. Output is A3 landscape (420 ×
-            297 mm).
+            Original vector paths remain editable. Export dimensions are
+            configured above.
           </p>
         </div>
         <footer>Map data © OpenStreetMap contributors · ODbL</footer>

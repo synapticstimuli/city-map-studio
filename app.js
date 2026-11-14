@@ -140,39 +140,136 @@ for (let ev of ["pointerup", "pointercancel", "lostpointercapture"])
     dragging = false;
     $("canvas").classList.remove("dragging");
   });
+
+/* ==========================================
+   SVG EXPORT
+   ========================================== */
+
 $("export").onclick = () => {
   if (!svg) return;
-  let clone = svg.cloneNode(true);
-  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-  clone.setAttribute("width", "420mm");
-  clone.setAttribute("height", "297mm");
-  const white = clone.querySelector("rect"); // preserve original white background
-  for (const [control, id] of Object.entries(groups)) {
-    let el = clone.querySelector(`[id="${id}"]`);
-    if (!el) continue;
-    el.setAttribute("display", $(control).checked ? "inline" : "none");
-    if (control === "roads")
-      el.setAttribute("stroke-width", $("roadWidth").value);
-    if (control === "paths")
-      el.setAttribute("stroke-width", $("pathWidth").value);
-    if (control === "rail")
-      el.setAttribute("stroke-width", $("railWidth").value);
-    el.removeAttribute("style");
-  }
-  let xml =
-    '<?xml version="1.0" encoding="UTF-8"?>\n' +
-    new XMLSerializer().serializeToString(clone);
-  let url = URL.createObjectURL(
-    new Blob([xml], { type: "image/svg+xml;charset=utf-8" }),
+
+  // Get user-selected physical page dimensions.
+  const { width, height } = getPaperDimensions();
+
+  // Clone the current map with its selected
+  // styling and visible/hidden layers.
+  const clone = svg.cloneNode(true);
+
+  // Read the map's original internal coordinates.
+  const sourceViewBox = svg.viewBox.baseVal;
+
+  const sourceWidth = sourceViewBox.width;
+  const sourceHeight = sourceViewBox.height;
+
+  // Initial uniform fit: preserve aspect ratio.
+  // The map occupies up to 90% of the page.
+  const marginFactor = 0.9;
+
+  const fitScale = Math.min(
+    (width * marginFactor) / sourceWidth,
+    (height * marginFactor) / sourceHeight,
   );
-  let link = document.createElement("a");
+
+  const fittedWidth = sourceWidth * fitScale;
+  const fittedHeight = sourceHeight * fitScale;
+
+  // Center the artwork on the selected page.
+  const offsetX = (width - fittedWidth) / 2;
+  const offsetY = (height - fittedHeight) / 2;
+
+  // Create a new SVG document for printing.
+  const ns = "http://www.w3.org/2000/svg";
+
+  const exportSvg = document.createElementNS(ns, "svg");
+
+  exportSvg.setAttribute("xmlns", ns);
+  exportSvg.setAttribute("width", `${width}mm`);
+  exportSvg.setAttribute("height", `${height}mm`);
+  exportSvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+
+  // White page background.
+  const background = document.createElementNS(ns, "rect");
+
+  background.setAttribute("x", 0);
+  background.setAttribute("y", 0);
+  background.setAttribute("width", width);
+  background.setAttribute("height", height);
+  background.setAttribute("fill", "#ffffff");
+
+  exportSvg.appendChild(background);
+
+  // Position and scale the original map artwork.
+  const mapGroup = document.createElementNS(ns, "g");
+
+  mapGroup.setAttribute(
+    "transform",
+    `translate(${offsetX} ${offsetY}) scale(${fitScale}) ` +
+      `translate(${-sourceViewBox.x} ${-sourceViewBox.y})`,
+  );
+
+  // The original SVG contains its own white
+  // background. Remove it from the cloned artwork.
+  const originalBackground = clone.querySelector("rect");
+
+  if (originalBackground) {
+    originalBackground.remove();
+  }
+
+  // Copy all remaining SVG elements into the group.
+  while (clone.firstChild) {
+    mapGroup.appendChild(clone.firstChild);
+  }
+
+  exportSvg.appendChild(mapGroup);
+
+  // Preserve current layer visibility and widths.
+  for (const [control, id] of Object.entries(groups)) {
+    const element = exportSvg.querySelector(`[id="${id}"]`);
+
+    if (!element) continue;
+
+    element.removeAttribute("style");
+
+    element.setAttribute("display", $(control).checked ? "inline" : "none");
+
+    if (control === "roads") {
+      element.setAttribute("stroke-width", $("roadWidth").value);
+    }
+
+    if (control === "paths") {
+      element.setAttribute("stroke-width", $("pathWidth").value);
+    }
+
+    if (control === "rail") {
+      element.setAttribute("stroke-width", $("railWidth").value);
+    }
+  }
+
+  // Serialize the SVG into a downloadable file.
+  const xml =
+    '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    new XMLSerializer().serializeToString(exportSvg);
+
+  const blob = new Blob([xml], {
+    type: "image/svg+xml;charset=utf-8",
+  });
+
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement("a");
+
   link.href = url;
-  link.download = $("city").value + "_Custom_Map.svg";
-  document.body.append(link);
+  link.download =
+    `${$("city").value}_${$("paperSize").value}_` +
+    `${$("orientation").value}.svg`;
+
+  document.body.appendChild(link);
   link.click();
   link.remove();
+
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
+
 $("resetStyle").addEventListener("click", () => {
   document.querySelector('[data-preset="fine"]').click();
 
@@ -183,4 +280,90 @@ $("resetStyle").addEventListener("click", () => {
 
   styleMap();
 });
+
+/* ==========================================
+   PRINT SETTINGS
+   ========================================== */
+
+// Paper dimensions in millimeters
+const paperSizes = {
+  A3: [297, 420],
+  "11x14": [279.4, 355.6],
+  "16x20": [406.4, 508],
+  "18x24": [457.2, 609.6],
+  "24x36": [609.6, 914.4],
+};
+
+// Calculate selected paper dimensions
+function getPaperDimensions() {
+  const paper = $("paperSize").value;
+  const orientation = $("orientation").value;
+
+  const [shortSide, longSide] = paperSizes[paper];
+
+  if (orientation === "landscape") {
+    return {
+      width: longSide,
+      height: shortSide,
+    };
+  }
+
+  return {
+    width: shortSide,
+    height: longSide,
+  };
+}
+
+/* Resize the visible print page to match
+   the selected paper dimensions. */
+
+function updatePrintPreview() {
+  const { width, height } = getPaperDimensions();
+
+  const canvas = $("canvas");
+  const mount = $("mapMount");
+
+  // Available space inside the workspace.
+  const availableWidth = Math.min(canvas.clientWidth * 0.9, 1100);
+
+  const availableHeight = Math.min(canvas.clientHeight * 0.8, 750);
+
+  // Scale the page uniformly to fit.
+  const previewScale = Math.min(
+    availableWidth / width,
+    availableHeight / height,
+  );
+
+  const previewWidth = width * previewScale;
+  const previewHeight = height * previewScale;
+
+  // Apply physical page proportions to
+  // the white preview surface.
+  mount.style.width = `${previewWidth}px`;
+  mount.style.height = `${previewHeight}px`;
+  mount.style.aspectRatio = `${width} / ${height}`;
+
+  // Recenter and fit the preview.
+  reset();
+}
+
+window.addEventListener("resize", updatePrintPreview);
+
+// Update the dimensions displayed in the sidebar
+function updatePaperDimensions() {
+  const { width, height } = getPaperDimensions();
+
+  $("paperDimensions").textContent =
+    `${width.toFixed(1)} × ${height.toFixed(1)} mm`;
+
+  updatePrintPreview();
+}
+
+// Listen for changes to the dropdowns
+$("paperSize").addEventListener("change", updatePaperDimensions);
+$("orientation").addEventListener("change", updatePaperDimensions);
+
+// Initialize the displayed dimensions
+updatePaperDimensions();
+
 loadCity();
