@@ -52,7 +52,9 @@ function reset() {
 }
 async function loadCity() {
   let token = ++request;
-  let city = $("city").value;
+  const selected = $("city").selectedOptions[0];
+  const city = selected.dataset.city || selected.value;
+  const mapUrl = files[selected.value];
   $("mapTitle").textContent = city;
   $("export").disabled = true;
   $("mapMount").innerHTML = '<div class="loading">Loading ' + city + "…</div>";
@@ -60,7 +62,7 @@ async function loadCity() {
   reset();
   setStatus("Loading " + city + " map...");
   try {
-    let resp = await fetch(files[city]);
+    let resp = await fetch(mapUrl);
     if (!resp.ok) throw Error("HTTP " + resp.status);
     let source = await resp.text();
     if (token !== request) return;
@@ -69,6 +71,17 @@ async function loadCity() {
     let node = doc.documentElement;
     if (node.localName !== "svg") throw Error("Unexpected document");
     svg = document.importNode(node, true);
+
+    const isCenterline = svg.querySelector('[id="road-centerlines"]') !== null;
+
+    groups.roads = isCenterline ? "road-centerlines" : "road-edges";
+
+    groups.paths = isCenterline ? "path-centerlines" : "path-edges";
+
+    $("roads").parentElement.lastChild.textContent = isCenterline
+      ? "Road centerlines"
+      : "Road edges";
+
     svg.removeAttribute("width");
     svg.removeAttribute("height");
     svg.setAttribute("role", "img");
@@ -366,4 +379,104 @@ $("orientation").addEventListener("change", updatePaperDimensions);
 // Initialize the displayed dimensions
 updatePaperDimensions();
 
+/* ==========================================
+   GENERATED MAP LOADER
+   ========================================== */
+
+function registerGeneratedMap(url, location, mode) {
+  const selector = $("city");
+
+  const key = getGeneratedMapKey(location, mode);
+
+  files[key] = url;
+
+  let option = Array.from(selector.options).find((item) => item.value === key);
+
+  if (!option) {
+    option = document.createElement("option");
+    option.value = key;
+
+    $("savedMaps").appendChild(option);
+  }
+
+  option.dataset.city = location.city;
+  option.dataset.state = location.state;
+  option.dataset.country = location.country;
+  option.dataset.mode = mode;
+
+  const modeLabel = mode === "centerline" ? "Centerlines" : "Road outlines";
+
+  option.textContent =
+    `${location.city}, ${location.state}, ` +
+    `${location.country} (${modeLabel})`;
+
+  return key;
+}
+
+async function loadGeneratedMap(url, location, mode) {
+  const key = registerGeneratedMap(url, location, mode);
+
+  $("city").value = key;
+
+  await loadCity();
+
+  if (!svg || $("city").value !== key) {
+    throw new Error("Generated map could not be loaded.");
+  }
+
+  await loadMapLibrary();
+}
+
+/* ==========================================
+   PERSISTENT MAP LIBRARY
+   ========================================== */
+
+const LIBRARY_API = "http://localhost:8001";
+
+function getGeneratedMapKey(location, mode) {
+  return [
+    location.city,
+    location.county,
+    location.state,
+    location.country,
+    mode,
+  ].join("_");
+}
+
+async function loadMapLibrary() {
+  try {
+    const response = await fetch(`${LIBRARY_API}/api/library`);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const savedMaps = await response.json();
+
+    // Records are already sorted newest first.
+    // Retain the newest map of each location and mode.
+    const seen = new Set();
+
+    for (const map of savedMaps) {
+      const key = getGeneratedMapKey(map, map.road_mode);
+
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const url = new URL(map.download_url, LIBRARY_API).href;
+
+      registerGeneratedMap(url, map, map.road_mode);
+    }
+
+    $("libraryStatus").textContent =
+      `${seen.size} saved map versions available.`;
+  } catch (error) {
+    console.error("Map library error:", error);
+
+    $("libraryStatus").textContent =
+      "Saved map library unavailable. Original maps remain accessible.";
+  }
+}
+
 loadCity();
+loadMapLibrary();

@@ -333,3 +333,26 @@ footer {
   height: 90%;
   display: block;
 }
+
+/* ==========================================
+   MAP GENERATOR PANEL
+   ========================================== */
+
+#generatorPanel .field {
+  margin: 10px 0;
+  font-size: 12px;
+}
+
+#generatorPanel input {
+  width: 100%;
+  padding: 10px;
+  background: #f8faf9;
+  border: 1px solid #dce3df;
+  border-radius: 8px;
+  font: inherit;
+  color: #1d2b25;
+}
+
+#generatorPanel #generateMap {
+  margin-top: 14px;
+}
