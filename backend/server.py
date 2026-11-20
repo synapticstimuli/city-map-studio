@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
-from cache_reuse import CACHE_SCHEMA, RENDER_VERSION, request_identity, reusable_map
+from cache_reuse import CACHE_SCHEMA, RENDER_VERSION, request_identity, reusable_map, svg_sha256
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.getenv("MAP_DATA_DIR", str(ROOT))).resolve()
@@ -120,6 +120,7 @@ def run_job(job_id: str, req: MapRequest):
 
         geography_key, render_key = request_identity(req)
         metadata = {
+            "svg_sha256": svg_sha256(destination),
             "cache_schema": CACHE_SCHEMA,
             "renderer_version": RENDER_VERSION,
             "geography_key": geography_key,
@@ -168,6 +169,8 @@ def health():
 
 @app.post("/api/maps", status_code=202)
 def create_map(req: MapRequest):
+    if APP_ENV.casefold() == "production":
+        raise HTTPException(503, "Public map generation is not enabled.")
     geography_key, render_key = request_identity(req)
     with lock:
         for existing in jobs.values():
@@ -229,6 +232,8 @@ def download(job_id: str):
         if job["status"] != "complete":
             raise HTTPException(409, "Map not ready")
         filepath = job["path"]
+    if not filepath.is_file():
+        raise HTTPException(404, "SVG file not found")
     return FileResponse(filepath, media_type="image/svg+xml", filename=filepath.name)
 
 
