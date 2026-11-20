@@ -32,6 +32,15 @@ def digest(value: dict) -> str:
     return hashlib.sha256(packed.encode("utf-8")).hexdigest()
 
 
+def svg_sha256(path: Path) -> str:
+    """Hash SVG content to reject partial or corrupted cached exports."""
+    hasher = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
 def reusable_map(output_dir: Path, render_key: str) -> dict | None:
     """Find matching completed map only if metadata and SVG are valid."""
     for record in output_dir.glob("*.json"):
@@ -50,7 +59,9 @@ def reusable_map(output_dir: Path, render_key: str) -> dict | None:
             if filename != Path(filename).name:
                 continue
             svg = output_dir / filename
-            if svg.is_file() and svg.stat().st_size > 0:
+            if (svg.is_file() and svg.stat().st_size > 0 and
+                    metadata.get("svg_sha256") and
+                    metadata["svg_sha256"] == svg_sha256(svg)):
                 return metadata
         except (KeyError, OSError, ValueError, TypeError, AttributeError):
             continue
