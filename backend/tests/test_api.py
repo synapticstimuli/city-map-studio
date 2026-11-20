@@ -2,6 +2,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 import sys
 
@@ -28,7 +29,7 @@ class APIFlowTests(unittest.TestCase):
 
     def submit_without_running(self, request):
         with patch.object(server.executor, "submit") as submit:
-            response = server.create_map(request)
+            response = server.create_map(request, SimpleNamespace(client=SimpleNamespace(host="127.0.0.1")))
         return response, submit
 
     def test_location_validation(self):
@@ -85,6 +86,11 @@ class APIFlowTests(unittest.TestCase):
         self.assertEqual(other["status"], "queued")
         self.assertNotEqual(other["id"], cached["id"])
         self.assertEqual(submit.call_count, 1)
+
+    def test_remote_client_cannot_generate(self):
+        with self.assertRaises(server.HTTPException) as caught:
+            server.create_map(self.req(), SimpleNamespace(client=SimpleNamespace(host="198.51.100.2")))
+        self.assertEqual(caught.exception.status_code, 403)
 
     def test_production_does_not_generate(self):
         with patch.object(server, "APP_ENV", "production"):
