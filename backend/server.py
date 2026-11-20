@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import json
 import subprocess
@@ -17,24 +18,54 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 
+
+# ==========================================
+# APPLICATION CONFIGURATION
+# ==========================================
+
 ROOT = Path(__file__).resolve().parent
-OUTPUT_DIR = ROOT / "generated_maps"
-CACHE_DIR = ROOT / "map_data_cache"
-OUTPUT_DIR.mkdir(exist_ok=True)
-CACHE_DIR.mkdir(exist_ok=True)
+
+APP_ENV = os.getenv("APP_ENV", "development")
+
+DATA_DIR = Path(os.getenv("MAP_DATA_DIR", str(ROOT))).resolve()
+
+OUTPUT_DIR = DATA_DIR / "generated_maps"
+CACHE_DIR = DATA_DIR / "map_data_cache"
+
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
 GENERATOR = ROOT / "generate_city_map_v2_1.py"
 
-app = FastAPI(title="City Map Studio local generation API", version="0.1")
+MAX_JOBS = int(os.getenv("MAX_JOBS", "20"))
+JOB_TIMEOUT = int(os.getenv("JOB_TIMEOUT", "1200"))
+OVERPASS_TIMEOUT = int(os.getenv("OVERPASS_TIMEOUT", "300"))
+
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000"
+    ).split(",")
+    if origin.strip()
+]
+
+# ==========================================
+# API INITIALIZATION
+# ==========================================
+
+app = FastAPI(title="City Map Studio API", version="2.0.0")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
+
 executor = ThreadPoolExecutor(max_workers=1)
+
 lock = threading.Lock()
 jobs: dict[str, dict] = {}
-MAX_JOBS = 20
 
 
 class MapRequest(BaseModel):
@@ -42,29 +73,29 @@ class MapRequest(BaseModel):
     state: str = Field(min_length=2, max_length=80)
     county: str = Field(default="", max_length=80)
     country: str = Field(default="USA", min_length=2, max_length=80)
+
     style: str = Field(default="fine", pattern="^(fine|detailed|bold)$")
+
     road_mode: str = Field(default="outline", pattern="^(centerline|outline)$")
+
     include_paths: bool = True
     show_boundary: bool = False
 
+    @field_validator("city", "state", "county", "country")
+    @classmethod
+    def safe_place(cls, value, info):
+        value = value.strip()
 
-@field_validator("city", "state", "county", "country")
-@classmethod
-def safe_place(cls, value, info):
-    value = value.strip()
+        if info.field_name == "county" and not value:
+            return ""
 
-    # County is optional.
-    if info.field_name == "county" and not value:
-        return ""
+        if len(value) < 2:
+            raise ValueError("Please enter a valid place name")
 
-    # All other location fields remain required.
-    if len(value) < 2:
-        raise ValueError("Please enter a valid place name")
+        if not re.fullmatch(r"[\w\s.,'()\-]+", value, flags=re.UNICODE):
+            raise ValueError("Only ordinary place-name characters are allowed")
 
-    if not re.fullmatch(r"[\w\s.,'()\-]+", value, flags=re.UNICODE):
-        raise ValueError("Only ordinary place-name characters are allowed")
-
-    return value
+        return value
 
 
 def public(job):
@@ -78,6 +109,7 @@ def run_job(job_id: str, req: MapRequest):
     destination = OUTPUT_DIR / f"{filename}_{job_id[:8]}.svg"
     command = [
         sys.executable,
+        "-u",
         str(GENERATOR),
         "--city",
         req.city,
@@ -96,7 +128,7 @@ def run_job(job_id: str, req: MapRequest):
         "--cache-dir",
         str(CACHE_DIR),
         "--overpass-timeout",
-        "300",
+        str(OVERPASS_TIMEOUT),
         "--include-paths" if req.include_paths else "--no-include-paths",
         "--show-boundary" if req.show_boundary else "--no-show-boundary",
     ]
@@ -104,14 +136,17 @@ def run_job(job_id: str, req: MapRequest):
         completed = subprocess.run(
             command,
             cwd=ROOT,
-            stdout=subprocess.PIPE,
+            stdout=None,
             stderr=subprocess.STDOUT,
             text=True,
-            timeout=1200,
+            timeout=JOB_TIMEOUT,
             check=False,
         )
+
         if completed.returncode != 0 or not destination.is_file():
-            raise RuntimeError((completed.stdout or "Map generation failed")[-2500:])
+            raise RuntimeError(
+                "Map generation failed. Check the backend terminal for details."
+            )
 
         metadata = {
             "id": job_id,
@@ -149,7 +184,12 @@ def run_job(job_id: str, req: MapRequest):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "mode": "local-prototype"}
+    return {
+        "status": "ok",
+        "application": "City Map Studio",
+        "version": "2.0.0",
+        "environment": APP_ENV,
+    }
 
 
 @app.post("/api/maps", status_code=202)
@@ -160,7 +200,7 @@ def create_map(req: MapRequest):
         )
         if active_jobs >= MAX_JOBS:
             raise HTTPException(
-                429, "Local test queue is full; restart server before more jobs"
+                429, "Map generation queue is full. Please try again later."
             )
         jid = str(uuid.uuid4())
         jobs[jid] = {

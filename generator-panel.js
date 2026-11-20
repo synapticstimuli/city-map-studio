@@ -2,10 +2,18 @@
    after <script src="app.js"></script> near end of index.html.
    Available ONLY while local backend runs on port 8001. */
 (() => {
-  const base = "http://localhost:8001";
+  const base = CONFIG.API_BASE_URL;
   const el = (id) => document.getElementById(id);
   const btn = el("generateMap");
   if (!btn) return;
+  if (!base) {
+    btn.disabled = true;
+
+    el("genStatus").textContent =
+      "Online map generation is currently unavailable.";
+
+    return;
+  }
   const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   btn.addEventListener("click", async () => {
     btn.disabled = true;
@@ -28,8 +36,8 @@
       });
       const job = await created.json();
       if (!created.ok) throw new Error(JSON.stringify(job.detail || job));
-      for (let attempt = 0; attempt < 400; attempt++) {
-        await pause(3000);
+      for (let attempt = 0; attempt < CONFIG.MAX_POLL_ATTEMPTS; attempt++) {
+        await pause(CONFIG.POLL_INTERVAL);
         const response = await fetch(
           `${base}/api/maps/${encodeURIComponent(job.id)}`,
         );
