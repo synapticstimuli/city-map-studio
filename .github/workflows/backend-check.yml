@@ -5,6 +5,10 @@ on:
   pull_request:
     paths:
       - "backend/**"
+      - "app.js"
+      - "generator-panel.js"
+      - "config.js"
+      - "index.html"
       - ".github/workflows/backend-check.yml"
 jobs:
   test:
@@ -20,3 +24,24 @@ jobs:
         run: python -m py_compile backend/server.py backend/cache_reuse.py backend/generate_city_map_v2_1.py
       - name: Run offline cache tests
         run: python -m unittest discover -s backend/tests -v
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check browser JavaScript syntax
+        run: |
+          node --check config.js
+          node --check app.js
+          node --check generator-panel.js
+      - name: Check frontend configuration is loaded before application scripts
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path("index.html").read_text(encoding="utf-8")
+          assert text.index('src="config.js"') < text.index('src="app.js"') < text.index('src="generator-panel.js"')
+          print("Frontend script order verified")
+          PY
