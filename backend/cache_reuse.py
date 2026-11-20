@@ -35,6 +35,12 @@ def source_identity(extract_file: str | Path | None = None) -> str:
     })[:24]
 
 
+def geographic_cache_folder(root: Path, place_key: str, source_key: str) -> Path:
+    """Preserve legacy Overpass layout; isolate all offline-extract revisions."""
+    base = Path(root) / place_key
+    return base if source_key == "overpass" else base / source_key
+
+
 def request_identity(req, generator_sha256: str = "", source_key: str = "overpass") -> tuple[str, str]:
     location = {
         key: " ".join(getattr(req, key).strip().casefold().split())
