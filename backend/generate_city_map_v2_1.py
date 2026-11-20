@@ -261,7 +261,11 @@ def load_geodata(args):
         f"Fetching roads, paths, and railways from OpenStreetMap (timeout: {args.overpass_timeout}s)...",
         flush=True,
     )
-    features = fetch_features_with_retry(boundary, {"highway": True, "railway": True})
+    tags = {
+        "highway": sorted(STREET_TYPES | PATH_TYPES),
+        "railway": sorted(RAIL_TYPES),
+    }
+    features = fetch_features_with_retry(boundary, tags)
     if features.empty:
         raise RuntimeError("No matching OpenStreetMap features found")
     features = features.to_crs("EPSG:4326")
