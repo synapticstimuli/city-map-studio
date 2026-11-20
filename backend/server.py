@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import hashlib
 import json
 import os
 import logging
@@ -27,6 +28,7 @@ CACHE_DIR = DATA_DIR / "map_data_cache"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 GENERATOR = ROOT / "generate_city_map_v2_1.py"
+GENERATOR_SHA256 = hashlib.sha256(GENERATOR.read_bytes()).hexdigest()
 APP_ENV = os.getenv("APP_ENV", "development")
 MAX_JOBS = max(1, int(os.getenv("MAX_JOBS", "20")))
 JOB_TIMEOUT = max(1, int(os.getenv("JOB_TIMEOUT", "1200")))
@@ -118,7 +120,7 @@ def run_job(job_id: str, req: MapRequest):
         if completed.returncode != 0 or not destination.is_file():
             raise RuntimeError("Map generation failed. Check backend logs.")
 
-        geography_key, render_key = request_identity(req)
+        geography_key, render_key = request_identity(req, GENERATOR_SHA256)
         metadata = {
             "svg_sha256": svg_sha256(destination),
             "cache_schema": CACHE_SCHEMA,
@@ -171,7 +173,7 @@ def health():
 def create_map(req: MapRequest):
     if APP_ENV.casefold() == "production":
         raise HTTPException(503, "Public map generation is not enabled.")
-    geography_key, render_key = request_identity(req)
+    geography_key, render_key = request_identity(req, GENERATOR_SHA256)
     with lock:
         for existing in jobs.values():
             if existing.get("render_key") == render_key and existing["status"] in ("queued", "running"):
