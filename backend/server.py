@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import logging
+import ipaddress
 import subprocess
 import sys
 import threading
@@ -15,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
@@ -170,9 +171,15 @@ def health():
 
 
 @app.post("/api/maps", status_code=202)
-def create_map(req: MapRequest):
+def create_map(req: MapRequest, request: Request):
     if APP_ENV.casefold() == "production":
         raise HTTPException(503, "Public map generation is not enabled.")
+    try:
+        local_request = ipaddress.ip_address(request.client.host).is_loopback
+    except (ValueError, AttributeError, TypeError):
+        local_request = False
+    if not local_request:
+        raise HTTPException(403, "Map generation is available only on localhost.")
     geography_key, render_key = request_identity(req, GENERATOR_SHA256)
     with lock:
         for existing in jobs.values():
