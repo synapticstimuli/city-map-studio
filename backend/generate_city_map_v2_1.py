@@ -249,7 +249,7 @@ def load_geodata(args):
     # Never mix Overpass and regional-extract geographic features.
     # Changing the extract path/size/mtime selects a fresh cache namespace.
     source_key = source_identity(args.extract_file)
-    folder = args.cache_dir / key / source_key
+    folder = args.cache_dir / key if source_key == "overpass" else args.cache_dir / key / source_key
     boundary_file = folder / "boundary.geojson"
     features_file = folder / "osm_features.geojson"
     if not args.refresh_data and boundary_file.exists() and features_file.exists():
@@ -257,9 +257,15 @@ def load_geodata(args):
         return gpd.read_file(boundary_file), gpd.read_file(features_file)
 
     query = location_query(args)
-    if boundary_file.is_file() and not args.refresh_data:
-        print(f"Reusing cached boundary: {boundary_file}", flush=True)
-        boundary_gdf = gpd.read_file(boundary_file).to_crs("EPSG:4326")
+    # Existing Overpass boundaries remain usable when importing a different
+    # dataset; the feature GeoJSON itself is never shared across sources.
+    prior_boundary = args.cache_dir / key / "boundary.geojson"
+    candidate_boundary = (
+        boundary_file if boundary_file.is_file() else prior_boundary
+    )
+    if candidate_boundary.is_file() and not args.refresh_data:
+        print(f"Reusing cached boundary: {candidate_boundary}", flush=True)
+        boundary_gdf = gpd.read_file(candidate_boundary).to_crs("EPSG:4326")
     else:
         print(f"Fetching boundary: {query}", flush=True)
         boundary_gdf = ox.geocode_to_gdf(query).to_crs("EPSG:4326")
