@@ -21,10 +21,10 @@ class APIFlowTests(unittest.TestCase):
         self.addCleanup(server.jobs.clear)
 
     def req(self, **kwargs):
-        return server.MapRequest(
-            city="Somerville", state="Massachusetts", county="Middlesex",
-            country="USA", **kwargs
-        )
+        fields = dict(city="Somerville", state="Massachusetts", county="Middlesex",
+                      country="USA")
+        fields.update(kwargs)
+        return server.MapRequest(**fields)
 
     def submit_without_running(self, request):
         with patch.object(server.executor, "submit") as submit:
