@@ -20,7 +20,7 @@ import pandas as pd
 
 from osmnx._errors import ResponseStatusCodeError, InsufficientResponseError
 from query_planner import plan_polygon_queries, GeographicQueryTooLarge
-from cache_reuse import source_identity
+from cache_reuse import source_identity, geographic_cache_folder
 
 import geopandas as gpd
 import osmnx as ox
@@ -249,7 +249,7 @@ def load_geodata(args):
     # Never mix Overpass and regional-extract geographic features.
     # Changing the extract path/size/mtime selects a fresh cache namespace.
     source_key = source_identity(args.extract_file)
-    folder = args.cache_dir / key if source_key == "overpass" else args.cache_dir / key / source_key
+    folder = geographic_cache_folder(args.cache_dir, key, source_key)
     boundary_file = folder / "boundary.geojson"
     features_file = folder / "osm_features.geojson"
     if not args.refresh_data and boundary_file.exists() and features_file.exists():
