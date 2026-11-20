@@ -62,3 +62,16 @@ to Overpass.
 OpenStreetMap data is governed by the ODbL and requires attribution.
 Check the Geofabrik download terms and OpenStreetMap attribution guidance
 before distribution or commercialization.
+
+## Cache source identity
+
+Overpass continues using the original city geographic cache folder. Local
+regional extracts use source-specific subfolders, identified by resolved file
+path, file size and nanosecond modification time. A new revision invalidates
+matching finished-SVG cache entries as well. Previously cached municipal
+boundaries can be reused across sources without mixing geographic features.
+
+The fingerprint is not a full cryptographic content digest of the extract;
+changing a file while preserving path, size and timestamp may escape detection.
+The backend also verifies that the fingerprint has not changed while a job
+runs, and discards the result if it has.
