@@ -45,6 +45,7 @@ GENERATOR_SHA256 = hashlib.sha256(GENERATOR.read_bytes()).hexdigest()
 MAX_JOBS = int(os.getenv("MAX_JOBS", "20"))
 JOB_TIMEOUT = int(os.getenv("JOB_TIMEOUT", "1200"))
 OVERPASS_TIMEOUT = int(os.getenv("OVERPASS_TIMEOUT", "300"))
+OSM_EXTRACT_FILE = os.getenv("OSM_EXTRACT_FILE", "").strip()
 
 ALLOWED_ORIGINS = [
     origin.strip()
@@ -138,6 +139,8 @@ def run_job(job_id: str, req: MapRequest):
         "--include-paths" if req.include_paths else "--no-include-paths",
         "--show-boundary" if req.show_boundary else "--no-show-boundary",
     ]
+    if OSM_EXTRACT_FILE:
+        command.extend(["--extract-file", OSM_EXTRACT_FILE])
     try:
         completed = subprocess.run(
             command,
