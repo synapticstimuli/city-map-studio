@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from cache_reuse import CACHE_SCHEMA, RENDER_VERSION, request_identity, reusable_map
+from cache_reuse import CACHE_SCHEMA, RENDER_VERSION, request_identity, reusable_map, svg_sha256
 
 
 class CacheReuseTest(unittest.TestCase):
@@ -36,11 +36,16 @@ class CacheReuseTest(unittest.TestCase):
             render_key = request_identity(self.request())[1]
             (root / "map.svg").write_text("<svg/>", encoding="utf-8")
             metadata = dict(id=identifier, filename="map.svg", cache_schema=CACHE_SCHEMA,
-                            renderer_version=RENDER_VERSION, render_key=render_key)
+                            renderer_version=RENDER_VERSION, render_key=render_key,
+                            svg_sha256=svg_sha256(root / "map.svg"))
             (root / f"{identifier}.json").write_text(json.dumps(metadata), encoding="utf-8")
             self.assertEqual(reusable_map(root, render_key)["id"], identifier)
             metadata["filename"] = "../outside.svg"
             (root / f"{identifier}.json").write_text(json.dumps(metadata), encoding="utf-8")
+            self.assertIsNone(reusable_map(root, render_key))
+            metadata["filename"] = "map.svg"
+            (root / f"{identifier}.json").write_text(json.dumps(metadata), encoding="utf-8")
+            (root / "map.svg").write_text("<svg>corrupted</svg>", encoding="utf-8")
             self.assertIsNone(reusable_map(root, render_key))
 
     def test_legacy_record_not_reused(self):
