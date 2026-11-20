@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from cache_reuse import CACHE_SCHEMA, RENDER_VERSION, request_identity, reusable_map, svg_sha256, source_identity
+from cache_reuse import CACHE_SCHEMA, RENDER_VERSION, request_identity, reusable_map, svg_sha256, source_identity, geographic_cache_folder
 
 
 class CacheReuseTest(unittest.TestCase):
@@ -22,6 +22,16 @@ class CacheReuseTest(unittest.TestCase):
     def test_normalized_location_key(self):
         self.assertEqual(request_identity(self.request()),
                          request_identity(self.request(city="  SOMERVILLE  ")))
+
+    def test_geography_cache_folder_preserves_legacy_overpass_and_separates_extracts(self):
+        root = Path("/data")
+        old = geographic_cache_folder(root, "Somerville_Middlesex_MA_USA", "overpass")
+        first = geographic_cache_folder(root, "Somerville_Middlesex_MA_USA", "extract-aaa")
+        second = geographic_cache_folder(root, "Somerville_Middlesex_MA_USA", "extract-bbb")
+        self.assertEqual(old, root / "Somerville_Middlesex_MA_USA")
+        self.assertNotEqual(first, old)
+        self.assertNotEqual(first, second)
+        self.assertEqual(first.parent, old)
 
     def test_distinct_data_sources_have_distinct_render_keys(self):
         overpass = request_identity(self.request(), "generator", "overpass")
