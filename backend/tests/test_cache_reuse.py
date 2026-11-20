@@ -23,6 +23,10 @@ class CacheReuseTest(unittest.TestCase):
         self.assertEqual(request_identity(self.request()),
                          request_identity(self.request(city="  SOMERVILLE  ")))
 
+    def test_generator_change_invalidates_render_cache(self):
+        self.assertNotEqual(request_identity(self.request(), "old")[1],
+                            request_identity(self.request(), "new")[1])
+
     def test_options_change_render_key(self):
         original = request_identity(self.request())[1]
         for field, value in [("style", "bold"), ("road_mode", "centerline"),
