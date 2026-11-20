@@ -16,8 +16,10 @@ from pathlib import Path
 import time
 import random
 import requests
+import pandas as pd
 
-from osmnx._errors import ResponseStatusCodeError
+from osmnx._errors import ResponseStatusCodeError, InsufficientResponseError
+from query_planner import plan_polygon_queries, GeographicQueryTooLarge
 
 import geopandas as gpd
 import osmnx as ox
@@ -265,7 +267,29 @@ def load_geodata(args):
         "highway": sorted(STREET_TYPES | PATH_TYPES),
         "railway": sorted(RAIL_TYPES),
     }
-    features = fetch_features_with_retry(boundary, tags)
+    # Query disconnected components individually: OSMnx would otherwise
+    # consolidate a MultiPolygon into a potentially enormous convex hull.
+    # Preflight checks reject unreasonably broad geometry *before* network I/O.
+    plan = plan_polygon_queries(boundary)
+    print(
+        f"Query plan: {len(plan.polygons)} separate areas; "
+        f"~{plan.projected_hull_km2:.1f} km2 total coverage",
+        flush=True,
+    )
+    components = []
+    for position, polygon in enumerate(plan.polygons, start=1):
+        print(f"Fetching geographic component {position}/{len(plan.polygons)}", flush=True)
+        try:
+            components.append(fetch_features_with_retry(polygon, tags))
+        except InsufficientResponseError:
+            # Some remote island components legitimately have no mapped roads.
+            print(f"Component {position} has no matching OSM features", flush=True)
+    if not components:
+        raise RuntimeError("No matching OpenStreetMap features found in any component")
+    features = gpd.GeoDataFrame(
+        pd.concat(components).loc[lambda frame: ~frame.index.duplicated(keep="first")],
+        crs=components[0].crs,
+    )
     if features.empty:
         raise RuntimeError("No matching OpenStreetMap features found")
     features = features.to_crs("EPSG:4326")
