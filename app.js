@@ -431,7 +431,7 @@ async function loadGeneratedMap(url, location, mode) {
    PERSISTENT MAP LIBRARY
    ========================================== */
 
-const LIBRARY_API = "http://localhost:8001";
+const LIBRARY_API = CONFIG.API_BASE_URL;
 
 function getGeneratedMapKey(location, mode) {
   return [
@@ -444,6 +444,10 @@ function getGeneratedMapKey(location, mode) {
 }
 
 async function loadMapLibrary() {
+  if (!LIBRARY_API) {
+    $("libraryStatus").textContent = "Online map generation is not configured yet.";
+    return;
+  }
   try {
     const response = await fetch(`${LIBRARY_API}/api/library`);
 
