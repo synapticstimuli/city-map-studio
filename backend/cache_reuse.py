@@ -12,7 +12,7 @@ PLACE_FIELDS = ("city", "county", "state", "country")
 OPTIONS = ("style", "road_mode", "include_paths", "show_boundary")
 
 
-def request_identity(req) -> tuple[str, str]:
+def request_identity(req, generator_sha256: str = "") -> tuple[str, str]:
     location = {
         key: " ".join(getattr(req, key).strip().casefold().split())
         for key in PLACE_FIELDS
@@ -21,6 +21,7 @@ def request_identity(req) -> tuple[str, str]:
     render_key = digest({
         "schema": CACHE_SCHEMA,
         "renderer": RENDER_VERSION,
+        "generator_sha256": generator_sha256,
         "geography_key": geography_key,
         "options": {key: getattr(req, key) for key in OPTIONS},
     })
