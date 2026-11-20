@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import logging
+import hashlib
+import ipaddress
 import re
 import json
 import subprocess
@@ -13,10 +16,11 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
+from cache_reuse import CACHE_SCHEMA, RENDER_VERSION, request_identity, reusable_map, svg_sha256
 
 
 # ==========================================
@@ -36,6 +40,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 GENERATOR = ROOT / "generate_city_map_v2_1.py"
+GENERATOR_SHA256 = hashlib.sha256(GENERATOR.read_bytes()).hexdigest()
 
 MAX_JOBS = int(os.getenv("MAX_JOBS", "20"))
 JOB_TIMEOUT = int(os.getenv("JOB_TIMEOUT", "1200"))
@@ -53,7 +58,7 @@ ALLOWED_ORIGINS = [
 # API INITIALIZATION
 # ==========================================
 
-app = FastAPI(title="City Map Studio API", version="2.0.0")
+app = FastAPI(title="City Map Studio API", version="2.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -66,6 +71,7 @@ executor = ThreadPoolExecutor(max_workers=1)
 
 lock = threading.Lock()
 jobs: dict[str, dict] = {}
+logger = logging.getLogger('city-map-studio')
 
 
 class MapRequest(BaseModel):
@@ -148,7 +154,15 @@ def run_job(job_id: str, req: MapRequest):
                 "Map generation failed. Check the backend terminal for details."
             )
 
+        geography_key, render_key = request_identity(req, GENERATOR_SHA256)
         metadata = {
+            "svg_sha256": svg_sha256(destination),
+            "cache_schema": CACHE_SCHEMA,
+            "renderer_version": RENDER_VERSION,
+            "geography_key": geography_key,
+            "render_key": render_key,
+            "include_paths": req.include_paths,
+            "show_boundary": req.show_boundary,
             "id": job_id,
             "city": req.city,
             "county": req.county,
@@ -178,6 +192,8 @@ def run_job(job_id: str, req: MapRequest):
             )
 
     except Exception as exc:
+        logger.exception("Generation failed for job %s", job_id)
+        destination.unlink(missing_ok=True)
         with lock:
             jobs[job_id].update(status="error", error=str(exc)[:1200])
 
@@ -187,14 +203,44 @@ def health():
     return {
         "status": "ok",
         "application": "City Map Studio",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "environment": APP_ENV,
     }
 
 
 @app.post("/api/maps", status_code=202)
-def create_map(req: MapRequest):
+def create_map(req: MapRequest, request: Request):
+    if APP_ENV.casefold() == "production":
+        raise HTTPException(503, "Public map generation is not enabled.")
+    try:
+        local_request = ipaddress.ip_address(request.client.host).is_loopback
+    except (ValueError, AttributeError, TypeError):
+        local_request = False
+    if not local_request:
+        raise HTTPException(403, "Map generation is available only on localhost.")
+
+    geography_key, render_key = request_identity(req, GENERATOR_SHA256)
     with lock:
+        for existing in jobs.values():
+            if existing.get("render_key") == render_key and existing["status"] in ("queued", "running"):
+                return public(existing)
+
+        cached = reusable_map(OUTPUT_DIR, render_key)
+        if cached is not None:
+            jid = cached["id"]
+            jobs[jid] = {
+                "id": jid,
+                "status": "complete",
+                "path": OUTPUT_DIR / cached["filename"],
+                "city": cached["city"],
+                "state": cached["state"],
+                "created_at": cached.get("created_at"),
+                "download_url": f"/api/library/{jid}/download",
+                "render_key": render_key,
+                "cache_hit": True,
+            }
+            return public(jobs[jid])
+
         active_jobs = sum(
             job["status"] in ("queued", "running") for job in jobs.values()
         )
@@ -206,6 +252,8 @@ def create_map(req: MapRequest):
         jobs[jid] = {
             "id": jid,
             "status": "queued",
+            "render_key": render_key,
+            "cache_hit": False,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "city": req.city,
             "state": req.state,
@@ -232,6 +280,8 @@ def download(job_id: str):
         if job["status"] != "complete":
             raise HTTPException(409, "Map not ready")
         filepath = job["path"]
+    if not filepath.is_file():
+        raise HTTPException(404, "SVG file not found")
     return FileResponse(filepath, media_type="image/svg+xml", filename=filepath.name)
 
 
