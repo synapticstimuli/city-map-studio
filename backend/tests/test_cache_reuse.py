@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from cache_reuse import CACHE_SCHEMA, RENDER_VERSION, request_identity, reusable_map, svg_sha256
+from cache_reuse import CACHE_SCHEMA, RENDER_VERSION, request_identity, reusable_map, svg_sha256, source_identity
 
 
 class CacheReuseTest(unittest.TestCase):
@@ -22,6 +22,28 @@ class CacheReuseTest(unittest.TestCase):
     def test_normalized_location_key(self):
         self.assertEqual(request_identity(self.request()),
                          request_identity(self.request(city="  SOMERVILLE  ")))
+
+    def test_distinct_data_sources_have_distinct_render_keys(self):
+        overpass = request_identity(self.request(), "generator", "overpass")
+        extract = request_identity(self.request(), "generator", "extract-abc")
+        self.assertNotEqual(overpass[0], extract[0])
+        self.assertNotEqual(overpass[1], extract[1])
+
+    def test_extract_revision_change_invalidates_cache(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "region.osm.pbf"
+            path.write_bytes(b"fixture-v1")
+            first = source_identity(path)
+            path.write_bytes(b"fixture-v2-with-new-size")
+            second = source_identity(path)
+            self.assertNotEqual(first, second)
+            self.assertEqual(source_identity(None), "overpass")
+            self.assertEqual(source_identity(""), "overpass")
+
+    def test_missing_extract_fails_explicitly(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(OSError):
+                source_identity(Path(folder) / "missing.osm.pbf")
 
     def test_generator_change_invalidates_render_cache(self):
         self.assertNotEqual(request_identity(self.request(), "old")[1],
