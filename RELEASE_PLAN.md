@@ -9,9 +9,12 @@ overwrite changes that may still exist only on the developer's Windows machine.
 - Stream generator logs to the backend console.
 - Cache completed SVGs using normalized request settings, with schema versioning.
 - Coalesce identical jobs while one is queued or running.
-- Fail closed on legacy or malformed cache records.
+- Fail closed on legacy or malformed cache records, and verify SVG SHA-256 integrity.
+- Invalidate finished-map cache entries if the generator source changes.
+- Limit Overpass tag requests to feature categories actually rendered.
+- Deny map-generation requests from non-loopback clients; production remains disabled.
 - Disable generation on hosted frontend until a secure production API is configured.
-- Add source syntax checks and unit tests.
+- Add Python compilation, unit/API lifecycle tests, frontend JS syntax checks and script-order tests.
 
 ## Local checkout and testing
 ```powershell
@@ -28,7 +31,7 @@ uncommitted changes.
 
 ## Not production-ready
 The Python API is intentionally local-only. Before public deployment:
-- Implement authentication, per-user quotas, abuse controls, and true cancellation.
+- Implement authenticated remote generation, per-user quotas, abuse controls, and true cancellation. The current localhost-only restriction must not simply be removed.
 - Validate geographic boundaries and prevent overly large Overpass requests.
 - Deploy durable persistent storage; in-memory job status will not survive restarts.
 - Implement configurable externally hosted API URL and restrict CORS to the deployed UI.
@@ -36,3 +39,4 @@ The Python API is intentionally local-only. Before public deployment:
 - Verify OpenStreetMap/Overpass usage requirements and attribution.
 
 Current cache identity uses normalized location text, not a verified OSM relation ID.
+Finished SVG integrity is checked, but dataset provenance and geographic cache health checks still need design.
