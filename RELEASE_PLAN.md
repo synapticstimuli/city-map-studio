@@ -33,7 +33,7 @@ uncommitted changes.
 ## Not production-ready
 The Python API is intentionally local-only. Before public deployment:
 - Implement authenticated remote generation, per-user quotas, abuse controls, and true cancellation. The current localhost-only restriction must not simply be removed.
-- Validate live large-city retrieval and introduce a regional OSM-extract fallback when area preflight refuses an oversized request.
+- Validate live large-city retrieval. The optional local regional OSM extract importer is implemented, but full-size PBF benchmarks and relation-geometry parity remain outstanding.
 - Deploy durable persistent storage; in-memory job status will not survive restarts.
 - Implement configurable externally hosted API URL and restrict CORS to the deployed UI.
 - Test complete end-to-end generation on real geographic caches and large regions.
@@ -55,3 +55,14 @@ The planner does not quietly drop islands or remote territory. When a large
 single polygon exceeds limits, generation refuses to make an expensive
 request and requires a regional extract or deliberate smaller-area selection.
 A real San Francisco success test and performance measurements remain pending.
+
+## Optional regional extract support (development)
+
+The generator can now read a configured local `.osm.pbf` extract via
+Pyosmium and clip tagged highway/railway ways to the cached or geocoded city
+boundary. The backend's `OSM_EXTRACT_FILE` environment variable activates
+this path; without it, the existing Overpass path remains in use. See
+`backend/REGIONAL_EXTRACTS.md` for installation, licensing, limitations,
+and reproducible local testing. This avoids Overpass calls during feature
+retrieval but does not remove the initial geocoding dependency unless the
+boundary was previously cached. CI exercises a synthetic OSM extract.
