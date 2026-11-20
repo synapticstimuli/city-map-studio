@@ -72,6 +72,15 @@ class APIFlowTests(unittest.TestCase):
         self.assertEqual(cached["id"], created["id"])
         self.assertEqual(submit.call_count, 0)
 
+        # Corrupt a completed file: identical requests must regenerate.
+        saved_svg = next(self.output.glob("*.svg"))
+        saved_svg.write_text("<svg>damaged</svg>", encoding="utf-8")
+        server.jobs.clear()
+        recovery, submit = self.submit_without_running(request)
+        self.assertEqual(recovery["status"], "queued")
+        self.assertNotEqual(recovery["id"], created["id"])
+        self.assertEqual(submit.call_count, 1)
+
         other, submit = self.submit_without_running(self.req(road_mode="centerline"))
         self.assertEqual(other["status"], "queued")
         self.assertNotEqual(other["id"], cached["id"])
