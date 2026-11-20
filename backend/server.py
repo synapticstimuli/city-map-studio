@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
-from cache_reuse import CACHE_SCHEMA, RENDER_VERSION, request_identity, reusable_map, svg_sha256
+from cache_reuse import CACHE_SCHEMA, RENDER_VERSION, request_identity, reusable_map, svg_sha256, source_identity
 
 
 # ==========================================
@@ -112,6 +112,7 @@ def public(job):
 def run_job(job_id: str, req: MapRequest):
     with lock:
         jobs[job_id]["status"] = "running"
+        expected_source_key = jobs[job_id]["source_key"]
     filename = re.sub("[^A-Za-z0-9_-]+", "_", req.city).strip("_") or "Map"
     destination = OUTPUT_DIR / f"{filename}_{job_id[:8]}.svg"
     command = [
@@ -142,6 +143,8 @@ def run_job(job_id: str, req: MapRequest):
     if OSM_EXTRACT_FILE:
         command.extend(["--extract-file", OSM_EXTRACT_FILE])
     try:
+        if source_identity(OSM_EXTRACT_FILE) != expected_source_key:
+            raise RuntimeError("OSM extract changed while job was queued. Submit a fresh request.")
         completed = subprocess.run(
             command,
             cwd=ROOT,
@@ -157,8 +160,11 @@ def run_job(job_id: str, req: MapRequest):
                 "Map generation failed. Check the backend terminal for details."
             )
 
-        geography_key, render_key = request_identity(req, GENERATOR_SHA256)
+        if source_identity(OSM_EXTRACT_FILE) != expected_source_key:
+            raise RuntimeError("OSM extract changed during generation; result discarded.")
+        geography_key, render_key = request_identity(req, GENERATOR_SHA256, expected_source_key)
         metadata = {
+            "source_key": expected_source_key,
             "svg_sha256": svg_sha256(destination),
             "cache_schema": CACHE_SCHEMA,
             "renderer_version": RENDER_VERSION,
@@ -222,7 +228,11 @@ def create_map(req: MapRequest, request: Request):
     if not local_request:
         raise HTTPException(403, "Map generation is available only on localhost.")
 
-    geography_key, render_key = request_identity(req, GENERATOR_SHA256)
+    try:
+        source_key = source_identity(OSM_EXTRACT_FILE)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(422, f"Configured regional extract unavailable: {exc}") from exc
+    geography_key, render_key = request_identity(req, GENERATOR_SHA256, source_key)
     with lock:
         for existing in jobs.values():
             if existing.get("render_key") == render_key and existing["status"] in ("queued", "running"):
@@ -256,6 +266,7 @@ def create_map(req: MapRequest, request: Request):
             "id": jid,
             "status": "queued",
             "render_key": render_key,
+            "source_key": source_key,
             "cache_hit": False,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "city": req.city,
