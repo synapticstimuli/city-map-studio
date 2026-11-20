@@ -16,8 +16,11 @@ from pathlib import Path
 import time
 import random
 import requests
+import pandas as pd
 
-from osmnx._errors import ResponseStatusCodeError
+from osmnx._errors import ResponseStatusCodeError, InsufficientResponseError
+from query_planner import plan_polygon_queries, GeographicQueryTooLarge
+from cache_reuse import source_identity, geographic_cache_folder
 
 import geopandas as gpd
 import osmnx as ox
@@ -243,7 +246,10 @@ def load_geodata(args):
     key = "_".join(
         slug(part) for part in (args.city, args.county, args.state, args.country)
     )
-    folder = args.cache_dir / key
+    # Never mix Overpass and regional-extract geographic features.
+    # Changing the extract path/size/mtime selects a fresh cache namespace.
+    source_key = source_identity(args.extract_file)
+    folder = geographic_cache_folder(args.cache_dir, key, source_key)
     boundary_file = folder / "boundary.geojson"
     features_file = folder / "osm_features.geojson"
     if not args.refresh_data and boundary_file.exists() and features_file.exists():
@@ -251,17 +257,57 @@ def load_geodata(args):
         return gpd.read_file(boundary_file), gpd.read_file(features_file)
 
     query = location_query(args)
-    print(f"Fetching boundary: {query}")
-    boundary_gdf = ox.geocode_to_gdf(query).to_crs("EPSG:4326")
+    # Existing Overpass boundaries remain usable when importing a different
+    # dataset; the feature GeoJSON itself is never shared across sources.
+    prior_boundary = args.cache_dir / key / "boundary.geojson"
+    candidate_boundary = (
+        boundary_file if boundary_file.is_file() else prior_boundary
+    )
+    if candidate_boundary.is_file() and not args.refresh_data:
+        print(f"Reusing cached boundary: {candidate_boundary}", flush=True)
+        boundary_gdf = gpd.read_file(candidate_boundary).to_crs("EPSG:4326")
+    else:
+        print(f"Fetching boundary: {query}", flush=True)
+        boundary_gdf = ox.geocode_to_gdf(query).to_crs("EPSG:4326")
     if boundary_gdf.empty:
         raise RuntimeError(f"No boundary found: {query}")
     boundary = boundary_gdf.geometry.union_all()
-    ox.settings.requests_timeout = args.overpass_timeout
-    print(
-        f"Fetching roads, paths, and railways from OpenStreetMap (timeout: {args.overpass_timeout}s)...",
-        flush=True,
-    )
-    features = fetch_features_with_retry(boundary, {"highway": True, "railway": True})
+
+    if args.extract_file is not None:
+        # Explicit opt-in; no Overpass queries when a local extract is selected.
+        from osm_extract import extract_features
+        features = extract_features(
+            args.extract_file, boundary, STREET_TYPES | PATH_TYPES, RAIL_TYPES
+        )
+    else:
+        ox.settings.requests_timeout = args.overpass_timeout
+        print(
+            f"Fetching roads, paths, and railways from OpenStreetMap (timeout: {args.overpass_timeout}s)...",
+            flush=True,
+        )
+        tags = {
+            "highway": sorted(STREET_TYPES | PATH_TYPES),
+            "railway": sorted(RAIL_TYPES),
+        }
+        plan = plan_polygon_queries(boundary)
+        print(
+            f"Query plan: {len(plan.polygons)} separate areas; "
+            f"~{plan.projected_hull_km2:.1f} km2 total coverage",
+            flush=True,
+        )
+        components = []
+        for position, polygon in enumerate(plan.polygons, start=1):
+            print(f"Fetching geographic component {position}/{len(plan.polygons)}", flush=True)
+            try:
+                components.append(fetch_features_with_retry(polygon, tags))
+            except InsufficientResponseError:
+                print(f"Component {position} has no matching OSM features", flush=True)
+        if not components:
+            raise RuntimeError("No matching OpenStreetMap features found in any component")
+        features = gpd.GeoDataFrame(
+            pd.concat(components).loc[lambda frame: ~frame.index.duplicated(keep="first")],
+            crs=components[0].crs,
+        )
     if features.empty:
         raise RuntimeError("No matching OpenStreetMap features found")
     features = features.to_crs("EPSG:4326")
@@ -518,6 +564,7 @@ def main():
     parser.add_argument(
         "--refresh-data", action="store_true", help="Re-download OpenStreetMap data"
     )
+    parser.add_argument("--extract-file", type=Path, default=None, help="Optional regional .osm.pbf file; bypasses Overpass")
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args()
     if not args.city.strip() or not args.state.strip() or not args.country.strip():

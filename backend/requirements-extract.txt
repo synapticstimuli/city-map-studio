@@ -1,0 +1,5 @@
+# Optional regional OSM/PBF import dependencies.
+# Install in the existing project virtual environment with:
+# python -m pip install -r backend/requirements-extract.txt
+-r requirements.txt
+osmium>=4,<5
