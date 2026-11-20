@@ -140,7 +140,13 @@ def load_geodata(args):
     boundary = boundary_gdf.geometry.union_all()
     ox.settings.requests_timeout = args.overpass_timeout
     print(f"Fetching roads, paths, and railways from OpenStreetMap (timeout: {args.overpass_timeout}s)...", flush=True)
-    features = ox.features.features_from_polygon(boundary, {"highway": True, "railway": True})
+    # Request only tags that the renderer actually uses. The original
+    # unfiltered True queries downloaded many irrelevant OSM objects.
+    tags = {
+        "highway": sorted(STREET_TYPES | PATH_TYPES),
+        "railway": sorted(RAIL_TYPES),
+    }
+    features = ox.features.features_from_polygon(boundary, tags)
     if features.empty:
         raise RuntimeError("No matching OpenStreetMap features found")
     features = features.to_crs("EPSG:4326")
