@@ -12,12 +12,35 @@ PLACE_FIELDS = ("city", "county", "state", "country")
 OPTIONS = ("style", "road_mode", "include_paths", "show_boundary")
 
 
-def request_identity(req, generator_sha256: str = "") -> tuple[str, str]:
+def source_identity(extract_file: str | Path | None = None) -> str:
+    """Stable provenance key for an unchanged source file.
+
+    Uses resolved path, byte size, and nanosecond mtime. This avoids hashing
+    multi-gigabyte extracts on every request. Replacing a file while preserving
+    all three attributes is outside the guarantee; a full content digest would
+    be required for cryptographic source identity.
+    """
+    if not extract_file:
+        return "overpass"
+    path = Path(extract_file).expanduser().resolve(strict=True)
+    if not path.is_file():
+        raise ValueError(f"Configured OSM extract is not a file: {path}")
+    stat = path.stat()
+    if stat.st_size == 0:
+        raise ValueError(f"Configured OSM extract is empty: {path}")
+    return "extract-" + digest({
+        "path": str(path),
+        "bytes": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    })[:24]
+
+
+def request_identity(req, generator_sha256: str = "", source_key: str = "overpass") -> tuple[str, str]:
     location = {
         key: " ".join(getattr(req, key).strip().casefold().split())
         for key in PLACE_FIELDS
     }
-    geography_key = digest({"location": location})
+    geography_key = digest({"location": location, "source": source_key})
     render_key = digest({
         "schema": CACHE_SCHEMA,
         "renderer": RENDER_VERSION,
