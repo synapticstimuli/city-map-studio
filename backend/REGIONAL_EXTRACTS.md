@@ -75,3 +75,30 @@ The fingerprint is not a full cryptographic content digest of the extract;
 changing a file while preserving path, size and timestamp may escape detection.
 The backend also verifies that the fingerprint has not changed while a job
 runs, and discards the result if it has.
+
+## Reproducible importer benchmark
+
+The standalone benchmark consumes **only local files** and does not call
+Nominatim or Overpass. It measures **PBF import and clipping**, not full
+SVG generation or browser rendering.
+
+From the project root on Windows, after installing the optional dependencies:
+
+```powershell
+.\.venv\Scripts\python.exe backend\benchmark_extract.py `
+  --extract "C:\MapData\massachusetts-latest.osm.pbf" `
+  --boundary "backend\map_data_cache\Somerville_Middlesex_Massachusetts_USA\boundary.geojson" `
+  --name "Somerville" `
+  --output "benchmark_results\somerville_extract.json"
+```
+
+The boundary path must refer to an existing cached GeoJSON file. Results
+include elapsed seconds, road/path and railway feature counts, and a
+`tracemalloc` estimate of Python allocations. The memory figure **does
+not include full native allocations / peak RSS** (GEOS, GeoPandas, Pyosmium).
+Run repeated measurements and compare the counts against the original map.
+Do not treat synthetic-fixture performance as regional-scale performance.
+
+The automated tests also convert a synthetic OSM XML fixture into an actual
+binary OSM PBF and read it back, covering format support independently of
+a real regional download.
