@@ -50,6 +50,38 @@ class RegionalExtractTests(unittest.TestCase):
             self.assertAlmostEqual(road.bounds[0], -71.01, places=6)
             self.assertAlmostEqual(road.bounds[2], -70.99, places=6)
 
+    def test_binary_pbf_roundtrip(self):
+        """Convert the fixture to actual OSM PBF and import it offline."""
+        import osmium
+
+        with TemporaryDirectory() as folder:
+            input_file = Path(folder) / "fixture.osm"
+            output_file = Path(folder) / "fixture.osm.pbf"
+            input_file.write_text(OSM, encoding="utf-8")
+
+            class CopyHandler(osmium.SimpleHandler):
+                def __init__(self, writer):
+                    super().__init__()
+                    self.writer = writer
+
+                def node(self, node):
+                    self.writer.add_node(node)
+
+                def way(self, way):
+                    self.writer.add_way(way)
+
+            with osmium.SimpleWriter(str(output_file)) as writer:
+                CopyHandler(writer).apply_file(str(input_file))
+
+            boundary = Polygon([
+                (-71.01, 41.99), (-70.99, 41.99),
+                (-70.99, 42.01), (-71.01, 42.01),
+            ])
+            features = extract_features(
+                output_file, boundary, {"residential"}, {"rail"}
+            )
+            self.assertEqual(len(features), 2)
+
     def test_missing_extract_is_explicit_error(self):
         with TemporaryDirectory() as folder:
             with self.assertRaises(FileNotFoundError):
