@@ -54,11 +54,18 @@ def main() -> int:
         assert "id" in job, job
         print("Map job", job["id"], "initial status", job.get("status"),
               "cache hit", job.get("cache_hit", False))
-        deadline = time.monotonic() + args.max_wait
+        started = time.monotonic()
+        deadline = started + args.max_wait
+        last_status = None
         while job.get("status") not in ("complete", "error") and time.monotonic() < deadline:
             time.sleep(3)
             job = request_json(args.base, "/api/maps/" + job["id"])
-            print("Status:", job.get("status"))
+            label = job.get("status")
+            position = job.get("queue_position")
+            message = label + (f" (queue position {position})" if position else "")
+            if message != last_status:
+                print(f"Status: {message} · elapsed {time.monotonic()-started:.1f}s")
+                last_status = message
         if job.get("status") == "error":
             print("FAIL: generation:", job.get("error"))
             return 1
@@ -79,6 +86,13 @@ def main() -> int:
         if group not in ids:
             raise ValueError("Missing expected road group: " + group)
         print("PASS: downloaded valid SVG", len(svg_bytes), "bytes")
+        print(
+            "TIMING:",
+            f"queue={job.get('queue_seconds', 'n/a')}s",
+            f"generation={job.get('generation_seconds', 'n/a')}s",
+            f"total={job.get('total_seconds', 'n/a')}s",
+            f"client_elapsed={time.monotonic()-started:.1f}s",
+        )
         second = request_json(args.base, "/api/maps", body)
         if second["id"] != job["id"] or second.get("status") != "complete":
             raise ValueError(f"Second identical request was not reused: {second}")
