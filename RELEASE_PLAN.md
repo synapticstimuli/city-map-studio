@@ -66,3 +66,14 @@ this path; without it, the existing Overpass path remains in use. See
 and reproducible local testing. This avoids Overpass calls during feature
 retrieval but does not remove the initial geocoding dependency unless the
 boundary was previously cached. CI exercises a synthetic OSM extract.
+
+## November 21, 2026 real extract validation
+
+GitHub Actions now downloads the real Geofabrik Monaco PBF (~705 KB), clips
+its roads and railways to a *test bounding box* and creates both centerline
+and outline SVG exports. Real extraction returned 3,656 geographic ways in
+0.615 seconds; centerline SVG has 3,663 paths and outline SVG 1,275 paths.
+The backend/frontend checks and real-data integration job passed (run
+44943704005). Full city-scale performance, municipal-boundary fidelity,
+complete rendering time, and native peak RSS are NOT yet established. See
+`REAL_DATA_VALIDATION.md` for the evidence and release gates.
