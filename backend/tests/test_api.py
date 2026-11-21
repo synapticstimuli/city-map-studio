@@ -101,6 +101,28 @@ class APIFlowTests(unittest.TestCase):
         self.assertNotEqual(other["id"], cached["id"])
         self.assertEqual(submit.call_count, 1)
 
+    def test_large_city_failure_provides_actionable_error_and_log(self):
+        request = self.req(city="Los Angeles", county="Los Angeles", state="California")
+        created, _ = self.submit_without_running(request)
+
+        def fail_large_boundary(command, **kwargs):
+            kwargs["stdout"].write(
+                "Traceback (most recent call last):\\n"
+                "GeographicQueryTooLarge: Boundary component 1 needs 1200 km2\\n"
+            )
+            kwargs["stdout"].flush()
+            class Result:
+                returncode = 1
+            return Result()
+
+        with patch.object(server.subprocess, "run", side_effect=fail_large_boundary):
+            server.run_job(created["id"], request)
+        status = server.map_status(created["id"])
+        self.assertEqual(status["status"], "error")
+        self.assertIn("safe Overpass area limit", status["error"])
+        self.assertIn("OSM_EXTRACT_FILE", status["error"])
+        self.assertTrue((self.output / f"{created['id']}.log").is_file())
+
     def test_remote_client_cannot_generate(self):
         with self.assertRaises(server.HTTPException) as caught:
             server.create_map(self.req(), SimpleNamespace(client=SimpleNamespace(host="198.51.100.2")))
