@@ -49,6 +49,15 @@ class APIFlowTests(unittest.TestCase):
         self.assertEqual(submit.call_count, 0)
         self.assertEqual(len(server.jobs), 1)
 
+    def test_queue_position_and_private_timing_not_exposed(self):
+        first, _ = self.submit_without_running(self.req())
+        second, _ = self.submit_without_running(self.req(road_mode="centerline"))
+        first_status = server.map_status(first["id"])
+        second_status = server.map_status(second["id"])
+        self.assertEqual(first_status["queue_position"], 1)
+        self.assertEqual(second_status["queue_position"], 2)
+        self.assertNotIn("_queued_monotonic", first_status)
+
     def test_completion_and_persistent_cache_hit(self):
         request = self.req()
         created, _ = self.submit_without_running(request)
@@ -62,7 +71,12 @@ class APIFlowTests(unittest.TestCase):
 
         with patch.object(server.subprocess, "run", side_effect=fake_run):
             server.run_job(created["id"], request)
-        self.assertEqual(server.jobs[created["id"]]["status"], "complete")
+        completed_job = server.map_status(created["id"])
+        self.assertEqual(completed_job["status"], "complete")
+        self.assertGreaterEqual(completed_job["generation_seconds"], 0)
+        self.assertGreaterEqual(completed_job["queue_seconds"], 0)
+        self.assertGreaterEqual(completed_job["total_seconds"], completed_job["generation_seconds"])
+        self.assertNotIn("_queued_monotonic", completed_job)
         self.assertEqual(len(list(self.output.glob("*.json"))), 1)
         self.assertEqual(len(list(self.output.glob("*.svg"))), 1)
 
