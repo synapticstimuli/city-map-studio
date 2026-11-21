@@ -109,3 +109,27 @@ as release-ready. The real Monaco PBF CI test used a rectangular test area.
 
 **Avoid:** merging draft PR #3, pushing to `main`, or deleting your current
 working project folder during this test.
+
+## Diagnosing one-minute map generation
+
+The backend deliberately runs **one generation worker** at a time. When a
+request stays `queued` before turning `running`, it may be waiting for a
+previous map job. This is distinct from slow geographic retrieval or rendering.
+
+After updating to the latest development commit and restarting the backend,
+`backend/smoke_local.py --generate` displays queue position on state changes
+and reports `queue_seconds`, `generation_seconds`, and `total_seconds`
+after successful completion. The browser generator panel also displays these
+values. A repeated **identical** request should return the cached finished SVG;
+changing centerline/outline, style, or location is intentionally a new render.
+
+To update an existing detached test worktree after the servers stop:
+
+```powershell
+git fetch origin
+git switch --detach origin/agent/reconciled-v2-1
+```
+
+Keep the original project checkout untouched. Stop the servers with Ctrl+C
+before switching versions, and restart both afterward. Do not interrupt an
+active map generation merely to update the test checkout.
