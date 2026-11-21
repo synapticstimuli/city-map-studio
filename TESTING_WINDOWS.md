@@ -133,3 +133,43 @@ git switch --detach origin/agent/reconciled-v2-1
 Keep the original project checkout untouched. Stop the servers with Ctrl+C
 before switching versions, and restart both afterward. Do not interrupt an
 active map generation merely to update the test checkout.
+
+## Los Angeles / large-city failure diagnostics
+
+The city of Los Angeles is in **Los Angeles County, California**. Use
+city=`Los Angeles`, county=`Los Angeles`, state=`California`,
+country=`USA`. Don't leave a Massachusetts county in the form.
+
+The generator enforces conservative regional query-area limits to avoid
+overloading the public Overpass API. A large municipal boundary may exceed
+these limits. This is a deliberate safety rejection, not proof that a
+particular city's street data is unavailable.
+
+The backend now saves a diagnostic log for each requested job at
+`backend/generated_maps/<job-uuid>.log` in the v2.1 test checkout.
+The error response identifies oversized geographic queries and suggests
+a **local California OSM extract** for larger cities. These logs also contain
+`STAGE boundary_lookup_seconds`, `STAGE feature_retrieval_seconds`,
+`STAGE geographic_loading_seconds`, and
+`STAGE svg_rendering_seconds` when the respective stage completes.
+
+To inspect the most recent relevant generator log without rerunning a
+large job, open PowerShell in the test checkout:
+
+```powershell
+Get-ChildItem .\backend\generated_maps\*.log |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -First 3 Name, LastWriteTime, Length
+
+Get-ChildItem .\backend\generated_maps\*.log |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -First 1 |
+  Get-Content -Tail 35
+```
+
+**Important:** logs are created only for jobs started **after** updating
+this branch and restarting the backend; the earlier failed LA attempt may
+not have a retained log. You can test other small cities before retrying
+LA. Do not repeatedly retry large Overpass requests that exceed the
+preflight limits. If an oversized-query error appears, stop and use a
+suitable regional OSM extract rather than disabling the safety checks.
