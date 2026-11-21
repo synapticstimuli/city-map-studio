@@ -36,6 +36,19 @@
       });
       const job = await created.json();
       if (!created.ok) throw new Error(JSON.stringify(job.detail || job));
+      const renderComplete = async (status) => {
+        const url = `${base}${status.download_url}`;
+        el("genStatus").textContent = `${status.city} ready. Loading preview...`;
+        await loadGeneratedMap(url, body, body.road_mode);
+        const timing = status.total_seconds != null
+          ? ` (queue ${status.queue_seconds ?? "?"}s; generation ${status.generation_seconds ?? "?"}s)`
+          : status.cache_hit ? " (cached)" : "";
+        el("genStatus").textContent = `${status.city} loaded${timing}.`;
+      };
+      if (job.status === "complete") {
+        await renderComplete(job);
+        return;
+      }
       for (let attempt = 0; attempt < CONFIG.MAX_POLL_ATTEMPTS; attempt++) {
         await pause(CONFIG.POLL_INTERVAL);
         const response = await fetch(
@@ -43,20 +56,16 @@
         );
         if (!response.ok) throw new Error(`Status failed (${response.status})`);
         const status = await response.json();
-        el("genStatus").textContent = `${status.city}: ${status.status}…`;
+        const queueText = status.status === "queued" && status.queue_position
+          ? ` (queue position ${status.queue_position})`
+          : "";
+        el("genStatus").textContent =
+          `${status.city}: ${status.status}${queueText}…`;
         if (status.status === "error")
           throw new Error(status.error || "Generation failed");
 
         if (status.status === "complete") {
-          const url = `${base}${status.download_url}`;
-
-          el("genStatus").textContent =
-            `${status.city} generated. Loading preview...`;
-
-          await loadGeneratedMap(url, body, body.road_mode);
-
-          el("genStatus").textContent = `${status.city} generated and loaded.`;
-
+          await renderComplete(status);
           return;
         }
       }
