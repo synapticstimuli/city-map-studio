@@ -91,6 +91,44 @@ jobs:
           assert report["extract_bytes"] > 100000, report
           print("REAL PBF smoke test: passed", report)
           PY
+      - name: Render real regional data in both road modes
+        run: |
+          mkdir -p benchmark_results/cache/Monaco_Location_Monaco_Monaco
+          cp benchmark_results/monaco_test_bbox.geojson \
+            benchmark_results/cache/Monaco_Location_Monaco_Monaco/boundary.geojson
+          python backend/generate_city_map_v2_1.py \
+            --city Monaco --county "" --state Monaco --country Monaco \
+            --road-mode centerline \
+            --extract-file benchmark_results/monaco-latest.osm.pbf \
+            --cache-dir benchmark_results/cache \
+            --output benchmark_results/monaco_centerline.svg
+          python backend/generate_city_map_v2_1.py \
+            --city Monaco --county "" --state Monaco --country Monaco \
+            --road-mode outline \
+            --extract-file benchmark_results/monaco-latest.osm.pbf \
+            --cache-dir benchmark_results/cache \
+            --output benchmark_results/monaco_outline.svg
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import xml.etree.ElementTree as ET
+          results = {}
+          for mode in ("centerline", "outline"):
+              path = Path(f"benchmark_results/monaco_{mode}.svg")
+              root = ET.parse(path).getroot()
+              ids = {item.attrib.get("id") for item in root.iter()}
+              road_group = "road-centerlines" if mode == "centerline" else "road-edges"
+              assert road_group in ids, ids
+              assert "railways" in ids, ids
+              assert "city-boundary" in ids, ids
+              paths = len(root.findall(".//{http://www.w3.org/2000/svg}path"))
+              assert paths > 100, (mode, paths)
+              results[mode] = {"svg_bytes": path.stat().st_size, "path_count": paths}
+          Path("benchmark_results/monaco_svg_summary.json").write_text(
+              json.dumps(results, indent=2), encoding="utf-8"
+          )
+          print("REAL PBF FULL SVG RENDER: passed", results)
+          PY
       - name: Upload benchmark report
         uses: actions/upload-artifact@v4
         with:
@@ -98,4 +136,7 @@ jobs:
           path: |
             benchmark_results/monaco_import.json
             benchmark_results/monaco_test_bbox.geojson
+            benchmark_results/monaco_svg_summary.json
+            benchmark_results/monaco_centerline.svg
+            benchmark_results/monaco_outline.svg
           retention-days: 14
