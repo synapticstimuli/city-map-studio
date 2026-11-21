@@ -150,19 +150,40 @@ def run_job(job_id: str, req: MapRequest):
     try:
         if source_identity(OSM_EXTRACT_FILE) != expected_source_key:
             raise RuntimeError("OSM extract changed while job was queued. Submit a fresh request.")
-        completed = subprocess.run(
-            command,
-            cwd=ROOT,
-            stdout=None,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=JOB_TIMEOUT,
-            check=False,
-        )
+        # Persist subprocess diagnostics per job. On failure show a bounded,
+        # actionable excerpt instead of hiding the generator's exception.
+        log_path = OUTPUT_DIR / f"{job_id}.log"
+        with log_path.open("w", encoding="utf-8") as log_stream:
+            completed = subprocess.run(
+                command,
+                cwd=ROOT,
+                stdout=log_stream,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=JOB_TIMEOUT,
+                check=False,
+            )
 
         if completed.returncode != 0 or not destination.is_file():
+            excerpt = log_path.read_text(encoding="utf-8", errors="replace")
+            lines = [line.strip() for line in excerpt.splitlines() if line.strip()]
+            if "GeographicQueryTooLarge" in excerpt:
+                raise RuntimeError(
+                    "Geographic request exceeds the safe Overpass area limit. "
+                    "For large cities such as Los Angeles, configure a regional "
+                    "California OSM extract (OSM_EXTRACT_FILE). "
+                    + (lines[-1][:350] if lines else "")
+                )
+            if any(word in excerpt.lower() for word in ("no boundary found", "geocode", "nominatim")):
+                raise RuntimeError(
+                    "Could not resolve the municipal boundary. Verify city, state, "
+                    "country and county (Los Angeles city is in Los Angeles County). "
+                    + (lines[-1][:350] if lines else "")
+                )
             raise RuntimeError(
-                "Map generation failed. Check the backend terminal for details."
+                "Map generation failed; see backend/generated_maps/"
+                f"{job_id}.log. Last diagnostic: "
+                + (lines[-1][:450] if lines else "Generator did not produce an SVG.")
             )
 
         if source_identity(OSM_EXTRACT_FILE) != expected_source_key:
@@ -208,6 +229,18 @@ def run_job(job_id: str, req: MapRequest):
                 total_seconds=round(time.monotonic() - jobs[job_id]["_queued_monotonic"], 2),
             )
 
+    except subprocess.TimeoutExpired as exc:
+        logger.exception("Generation timed out for job %s", job_id)
+        destination.unlink(missing_ok=True)
+        with lock:
+            jobs[job_id].update(
+                status="error",
+                error=f"Generation exceeded the {JOB_TIMEOUT}s backend timeout. "
+                      "For large cities try a regional OSM extract or a smaller location.",
+                finished_at=datetime.now(timezone.utc).isoformat(),
+                generation_seconds=round(time.monotonic() - started_monotonic, 2),
+                total_seconds=round(time.monotonic() - jobs[job_id]["_queued_monotonic"], 2),
+            )
     except Exception as exc:
         logger.exception("Generation failed for job %s", job_id)
         destination.unlink(missing_ok=True)
