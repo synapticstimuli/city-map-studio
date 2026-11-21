@@ -11,6 +11,7 @@ import json
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -106,13 +107,17 @@ class MapRequest(BaseModel):
 
 
 def public(job):
-    return {k: v for k, v in job.items() if k not in ("path",)}
+    return {k: v for k, v in job.items() if k not in ("path", "_queued_monotonic")}
 
 
 def run_job(job_id: str, req: MapRequest):
     with lock:
-        jobs[job_id]["status"] = "running"
-        expected_source_key = jobs[job_id]["source_key"]
+        job = jobs[job_id]
+        started_monotonic = time.monotonic()
+        job["status"] = "running"
+        job["started_at"] = datetime.now(timezone.utc).isoformat()
+        job["queue_seconds"] = round(started_monotonic - job["_queued_monotonic"], 2)
+        expected_source_key = job["source_key"]
     filename = re.sub("[^A-Za-z0-9_-]+", "_", req.city).strip("_") or "Map"
     destination = OUTPUT_DIR / f"{filename}_{job_id[:8]}.svg"
     command = [
@@ -198,13 +203,22 @@ def run_job(job_id: str, req: MapRequest):
                 status="complete",
                 path=destination,
                 download_url=metadata["download_url"],
+                finished_at=datetime.now(timezone.utc).isoformat(),
+                generation_seconds=round(time.monotonic() - started_monotonic, 2),
+                total_seconds=round(time.monotonic() - jobs[job_id]["_queued_monotonic"], 2),
             )
 
     except Exception as exc:
         logger.exception("Generation failed for job %s", job_id)
         destination.unlink(missing_ok=True)
         with lock:
-            jobs[job_id].update(status="error", error=str(exc)[:1200])
+            jobs[job_id].update(
+                status="error",
+                error=str(exc)[:1200],
+                finished_at=datetime.now(timezone.utc).isoformat(),
+                generation_seconds=round(time.monotonic() - started_monotonic, 2),
+                total_seconds=round(time.monotonic() - jobs[job_id]["_queued_monotonic"], 2),
+            )
 
 
 @app.get("/api/health")
@@ -268,6 +282,7 @@ def create_map(req: MapRequest, request: Request):
             "render_key": render_key,
             "source_key": source_key,
             "cache_hit": False,
+            "_queued_monotonic": time.monotonic(),
             "created_at": datetime.now(timezone.utc).isoformat(),
             "city": req.city,
             "state": req.state,
@@ -282,7 +297,13 @@ def map_status(job_id: str):
         job = jobs.get(job_id)
         if job is None:
             raise HTTPException(404, "Unknown job")
-        return public(job)
+        result = public(job)
+        if job["status"] == "queued":
+            result["queue_position"] = sum(
+                j["status"] == "queued" and j["_queued_monotonic"] < job["_queued_monotonic"]
+                for j in jobs.values()
+            ) + 1
+        return result
 
 
 @app.get("/api/maps/{job_id}/download")
