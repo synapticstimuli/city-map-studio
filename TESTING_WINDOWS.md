@@ -26,18 +26,11 @@ Use Python 3.12 where available (Windows Python launcher):
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r backend\requirements-extract.txt
 .\.venv\Scripts\python.exe -m unittest discover -s backend\tests -v
 ```
 
-The optional regional PBF importer additionally requires:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r backend\requirements-extract.txt
-```
-
-You do **not** need a regional PBF to test the viewer, original maps,
-Overpass generation, or finished-SVG caching.
+The full offline unit-test suite uses Pyosmium, so this installs the optional importer dependencies too. You do **not** need to download any regional PBF to test the viewer, original maps, Overpass generation, or finished-SVG caching.
 
 ## 3. Start both local servers (separate PowerShell terminals)
 
