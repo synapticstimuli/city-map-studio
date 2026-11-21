@@ -235,6 +235,7 @@ def fetch_features_with_retry(boundary, tags, max_attempts=4):
 
 def load_geodata(args):
     """Download once per place, or reuse human-readable GeoJSON files."""
+    started_at = time.perf_counter()
     # Geographic download settings
     ox.settings.log_console = True
     ox.settings.use_cache = True
@@ -254,9 +255,13 @@ def load_geodata(args):
     features_file = folder / "osm_features.geojson"
     if not args.refresh_data and boundary_file.exists() and features_file.exists():
         print(f"Using cached geographic data: {folder}")
-        return gpd.read_file(boundary_file), gpd.read_file(features_file)
+        cached_boundary = gpd.read_file(boundary_file)
+        cached_features = gpd.read_file(features_file)
+        print(f"STAGE geographic_cache_read_seconds={time.perf_counter()-started_at:.2f}", flush=True)
+        return cached_boundary, cached_features
 
     query = location_query(args)
+    boundary_started_at = time.perf_counter()
     # Existing Overpass boundaries remain usable when importing a different
     # dataset; the feature GeoJSON itself is never shared across sources.
     prior_boundary = args.cache_dir / key / "boundary.geojson"
@@ -272,6 +277,8 @@ def load_geodata(args):
     if boundary_gdf.empty:
         raise RuntimeError(f"No boundary found: {query}")
     boundary = boundary_gdf.geometry.union_all()
+    print(f"STAGE boundary_lookup_seconds={time.perf_counter()-boundary_started_at:.2f}", flush=True)
+    features_started_at = time.perf_counter()
 
     if args.extract_file is not None:
         # Explicit opt-in; no Overpass queries when a local extract is selected.
@@ -310,6 +317,7 @@ def load_geodata(args):
         )
     if features.empty:
         raise RuntimeError("No matching OpenStreetMap features found")
+    print(f"STAGE feature_retrieval_seconds={time.perf_counter()-features_started_at:.2f}", flush=True)
     features = features.to_crs("EPSG:4326")
     folder.mkdir(parents=True, exist_ok=True)
     boundary_gdf[["geometry"]].to_file(boundary_file, driver="GeoJSON", index=False)
@@ -343,11 +351,15 @@ def load_geodata(args):
         )
     clean.to_file(features_file, driver="GeoJSON", index=False)
     print(f"Cached geographic data: {folder}")
+    print(f"STAGE geographic_total_seconds={time.perf_counter()-started_at:.2f}", flush=True)
     return boundary_gdf, clean
 
 
 def create_svg(args):
+    generation_started_at = time.perf_counter()
     boundary_gdf, features = load_geodata(args)
+    print(f"STAGE geographic_loading_seconds={time.perf_counter()-generation_started_at:.2f}", flush=True)
+    render_started_at = time.perf_counter()
     boundary = boundary_gdf.geometry.union_all()
     local_crs = boundary_gdf.estimate_utm_crs()
     if local_crs is None:
@@ -487,6 +499,8 @@ def create_svg(args):
         drawing.add(groups[key])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     drawing.save(pretty=False)
+    print(f"STAGE svg_rendering_seconds={time.perf_counter()-render_started_at:.2f}", flush=True)
+    print(f"STAGE generator_total_seconds={time.perf_counter()-generation_started_at:.2f}", flush=True)
     print(f"Saved: {args.output.resolve()}")
     print(
         f"Style: {args.style}; road mode: {args.road_mode}; paths per layer: {counts}"
