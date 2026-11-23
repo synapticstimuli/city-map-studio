@@ -2,6 +2,7 @@
    after <script src="app.js"></script> near end of index.html.
    Available ONLY while local backend runs on port 8001. */
 (() => {
+  window.CMS_GENERATOR_BUILD = "regional-20261123-fix2";
   const base = CONFIG.API_BASE_URL;
   const el = (id) => document.getElementById(id);
   const btn = el("generateMap");
