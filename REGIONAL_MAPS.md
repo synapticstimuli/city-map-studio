@@ -59,3 +59,34 @@ An offline integration test seeds focus and surrounding features and confirms
 that the output SVG has a nonempty `regional-context` layer, prominent
 focus-city boundary, and independently editable focus-city groups. The
 City-only fixture confirms that the regional context group is absent.
+
+## Test the regional preview safely on Windows
+
+Stop any running local frontend/backend servers, then open PowerShell in
+your existing `city-map-studio-v21-test` working directory:
+
+```powershell
+git fetch origin
+git worktree add ..\city-map-studio-regional-test origin/agent/regional-context-v2-2
+cd ..\city-map-studio-regional-test
+py -3.12 launch_local.py
+```
+
+The new folder and its local map cache are separate from the validated v2.1
+checkout. The launcher starts the frontend and backend and opens the editor.
+Choose **Watertown / Middlesex / Massachusetts / USA**, set **Map extent**
+to **Regional**, then generate and inspect:
+
+1. Dark Watertown streets and a prominent focus-city border
+2. Muted streets and railways outside the boundary
+3. Regional surroundings checkbox independently hides the outer context
+4. Downloaded SVG contains a `regional-context` group in addition to the
+   normal focus-city road/path/boundary groups
+5. Repeating an identical Regional request reuses the completed map cache
+
+The default City-only option should continue to omit the regional SVG group.
+If Overpass refuses the wider request, the backend should explain the area
+restriction; a local Massachusetts extract is the alternative.
+
+When reporting a defect, capture the city inputs, selected road mode,
+error text, and whether it occurred on first generation or cache reuse.
