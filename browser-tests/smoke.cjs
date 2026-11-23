@@ -1,0 +1,62 @@
+/* End-to-end smoke test against a locally served City Map Studio frontend.
+ * Usage: node browser-tests/smoke.cjs  (requires Playwright/Chromium).
+ */
+const { chromium } = require("playwright");
+const assert = require("node:assert/strict");
+
+(async () => {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ acceptDownloads: true });
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  try {
+    await page.goto("http://127.0.0.1:8000", { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(() => {
+      const svg = document.querySelector("#mapMount svg");
+      return svg && svg.querySelectorAll("path").length > 50;
+    }, { timeout: 20000 });
+    assert.equal(await page.locator("#mapTitle").textContent(), "Somerville");
+    assert.equal(await page.locator("#export").isEnabled(), true);
+
+    await page.locator('[data-preset="bold"]').click();
+    assert.equal(await page.locator("#roadWidth").inputValue(), "0.28");
+    await page.locator("#boundary").check();
+    const boundaryDisplay = await page.locator("#mapMount #city-boundary").evaluate(
+      (el) => el.style.display
+    );
+    assert.notEqual(boundaryDisplay, "none");
+
+    await page.locator("#paperSize").selectOption("18x24");
+    await page.locator("#orientation").selectOption("portrait");
+    assert.match(await page.locator("#paperDimensions").textContent(), /457.2/);
+
+    const downloadPromise = page.waitForEvent("download", { timeout: 15000 });
+    await page.locator("#export").click();
+    const download = await downloadPromise;
+    assert.match(download.suggestedFilename(), /18x24_portrait\.svg$/);
+    const path = await download.path();
+    const fs = require("node:fs");
+    const exported = fs.readFileSync(path, "utf8");
+    assert.match(exported, /<svg\b/);
+    assert.match(exported, /city-boundary/);
+    assert.match(exported, /457\.2mm/);
+
+    await page.locator("#city").selectOption("Cambridge");
+    await page.waitForFunction(() => document.querySelector("#mapTitle").textContent === "Cambridge"
+      && document.querySelector("#mapMount svg")?.querySelectorAll("path").length > 50);
+    assert.equal(await page.locator("#export").isEnabled(), true);
+    await page.locator("#zoomIn").click();
+    assert.match(await page.locator("#mapMount").getAttribute("style"), /scale\(1\.25\)/);
+    await page.locator("#zoomReset").click();
+    assert.match(await page.locator("#mapMount").getAttribute("style"), /scale\(1\)/);
+
+    if (errors.length) throw new Error("Browser JavaScript errors: " + errors.join(" | "));
+    console.log("PASS: city loading, map styling, layer visibility, export, paper orientation, zoom");
+  } finally {
+    await browser.close();
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
