@@ -18,6 +18,7 @@ const assert = require("node:assert/strict");
     }, { timeout: 20000 });
     assert.equal(await page.locator("#mapTitle").textContent(), "Somerville");
     assert.equal(await page.locator("#export").isEnabled(), true);
+    assert.equal(await page.evaluate(() => window.CMS_GENERATOR_BUILD), "regional-20261123-fix2");
     assert.equal(await page.locator("#genScope").inputValue(), "city");
     assert.equal(await page.locator("#regionalLayer").isDisabled(), true);
     await page.locator("#genScope").selectOption("regional");
@@ -43,6 +44,39 @@ const assert = require("node:assert/strict");
       document.querySelector("#genStatus")?.textContent.includes("older City Map Studio")
     );
     assert.equal(posted, false, "Frontend should not post to an old backend");
+    await page.unroute("**/api/health");
+    await page.unroute("**/api/maps");
+
+    // A v2.2 endpoint must receive a Regional request, never City-only.
+    let submittedBody = null;
+    await page.route("**/api/health", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        headers: { "access-control-allow-origin": "*" },
+        body: JSON.stringify({
+          status: "ok",
+          version: "2.2.0",
+          capabilities: { regional_context: true },
+        }),
+      })
+    );
+    await page.route("**/api/maps", (route) => {
+      submittedBody = route.request().postDataJSON();
+      return route.fulfill({
+        status: 422,
+        contentType: "application/json",
+        headers: { "access-control-allow-origin": "*" },
+        body: JSON.stringify({ detail: "fixture request intercepted" }),
+      });
+    });
+    await page.locator("#genScope").selectOption("regional");
+    await page.locator("#generateMap").click();
+    await page.waitForFunction(() =>
+      document.querySelector("#genStatus")?.textContent.includes("fixture request intercepted")
+    );
+    assert.equal(submittedBody.regional_context, true);
+    assert.equal(submittedBody.regional_buffer_km, 3);
     await page.unroute("**/api/health");
     await page.unroute("**/api/maps");
     await page.locator("#genScope").selectOption("city");
