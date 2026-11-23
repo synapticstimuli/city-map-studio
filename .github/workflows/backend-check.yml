@@ -44,7 +44,7 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           text = Path("index.html").read_text(encoding="utf-8")
-          assert text.index('src="config.js"') < text.index('src="app.js"') < text.index('src="generator-panel.js"')
+          assert text.index('src="config.js') < text.index('src="app.js') < text.index('src="generator-panel.js')
           print("Frontend script order verified")
           PY
 
