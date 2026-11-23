@@ -25,6 +25,8 @@
         county: el("genCounty").value.trim(),
         country: el("genCountry").value.trim(),
         road_mode: el("genMode").value,
+        regional_context: el("genScope").value === "regional",
+        regional_buffer_km: 3.0,
         style: "fine",
         include_paths: true,
         show_boundary: false,
