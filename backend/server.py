@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import uuid
+from xml.etree import ElementTree
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -112,6 +113,27 @@ def public(job):
     return {k: v for k, v in job.items() if k not in ("path", "_queued_monotonic")}
 
 
+def svg_contains_nonempty_group(path: Path, group_id: str) -> bool:
+    """Stream-validate a populated SVG layer without loading the entire map."""
+    depth = 0
+    found_path = False
+    for event, node in ElementTree.iterparse(path, events=("start", "end")):
+        if event == "start":
+            if depth:
+                depth += 1
+                if node.tag.rsplit("}", 1)[-1] == "path":
+                    found_path = True
+            elif node.get("id") == group_id:
+                depth = 1
+        elif depth:
+            depth -= 1
+            if depth == 0:
+                return found_path
+        if event == "end":
+            node.clear()
+    return False
+
+
 def run_job(job_id: str, req: MapRequest):
     with lock:
         job = jobs[job_id]
@@ -191,6 +213,13 @@ def run_job(job_id: str, req: MapRequest):
                 + (lines[-1][:450] if lines else "Generator did not produce an SVG.")
             )
 
+        if req.regional_context and not svg_contains_nonempty_group(
+            destination, "regional-context"
+        ):
+            raise RuntimeError(
+                "The generator did not produce the required populated regional-context "
+                "SVG layer. The result was discarded; check the job log and backend version."
+            )
         if source_identity(OSM_EXTRACT_FILE) != expected_source_key:
             raise RuntimeError("OSM extract changed during generation; result discarded.")
         geography_key, render_key = request_identity(req, GENERATOR_SHA256, expected_source_key)
