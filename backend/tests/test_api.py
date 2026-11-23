@@ -180,6 +180,23 @@ class APIFlowTests(unittest.TestCase):
         self.assertTrue(cached["cache_hit"])
         self.assertTrue(cached["regional_context"])
 
+        # A defective saved Regional SVG can have a matching checksum and
+        # request identity. Missing context must force a new job.
+        bad_svg = next(self.output.glob("*.svg"))
+        bad_svg.write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg"><g id="road-edges">'
+            '<path d="M0 0L1 1"/></g></svg>', encoding="utf-8"
+        )
+        saved["svg_sha256"] = server.svg_sha256(bad_svg)
+        (self.output / (created["id"] + ".json")).write_text(
+            __import__("json").dumps(saved), encoding="utf-8"
+        )
+        server.jobs.clear()
+        regenerated, submit = self.submit_without_running(request)
+        self.assertEqual(regenerated["status"], "queued")
+        self.assertNotEqual(regenerated["id"], created["id"])
+        self.assertEqual(submit.call_count, 1)
+
 
     def test_regional_extent_is_bounded(self):
         with self.assertRaises(ValueError):
