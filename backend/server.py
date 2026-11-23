@@ -88,6 +88,8 @@ class MapRequest(BaseModel):
 
     include_paths: bool = True
     show_boundary: bool = False
+    regional_context: bool = False
+    regional_buffer_km: float = Field(default=3.0, ge=0.5, le=10.0)
 
     @field_validator("city", "state", "county", "country")
     @classmethod
@@ -144,6 +146,9 @@ def run_job(job_id: str, req: MapRequest):
         str(OVERPASS_TIMEOUT),
         "--include-paths" if req.include_paths else "--no-include-paths",
         "--show-boundary" if req.show_boundary else "--no-show-boundary",
+        "--regional-context" if req.regional_context else "--no-regional-context",
+        "--regional-buffer-km",
+        str(req.regional_buffer_km),
     ]
     if OSM_EXTRACT_FILE:
         command.extend(["--extract-file", OSM_EXTRACT_FILE])
@@ -198,6 +203,8 @@ def run_job(job_id: str, req: MapRequest):
             "render_key": render_key,
             "include_paths": req.include_paths,
             "show_boundary": req.show_boundary,
+            "regional_context": req.regional_context,
+            "regional_buffer_km": req.regional_buffer_km,
             "id": job_id,
             "city": req.city,
             "county": req.county,
