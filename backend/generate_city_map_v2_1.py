@@ -251,6 +251,8 @@ def load_geodata(args):
     # Changing the extract path/size/mtime selects a fresh cache namespace.
     source_key = source_identity(args.extract_file)
     folder = geographic_cache_folder(args.cache_dir, key, source_key)
+    if args.regional_context:
+        folder = folder / f"regional_{int(round(args.regional_buffer_km * 1000))}m"
     boundary_file = folder / "boundary.geojson"
     features_file = folder / "osm_features.geojson"
     if not args.refresh_data and boundary_file.exists() and features_file.exists():
@@ -265,8 +267,10 @@ def load_geodata(args):
     # Existing Overpass boundaries remain usable when importing a different
     # dataset; the feature GeoJSON itself is never shared across sources.
     prior_boundary = args.cache_dir / key / "boundary.geojson"
-    candidate_boundary = (
-        boundary_file if boundary_file.is_file() else prior_boundary
+    source_boundary = geographic_cache_folder(args.cache_dir, key, source_key) / "boundary.geojson"
+    candidate_boundary = next(
+        (candidate for candidate in (boundary_file, source_boundary, prior_boundary) if candidate.is_file()),
+        boundary_file,
     )
     if candidate_boundary.is_file() and not args.refresh_data:
         print(f"Reusing cached boundary: {candidate_boundary}", flush=True)
@@ -279,12 +283,28 @@ def load_geodata(args):
     boundary = boundary_gdf.geometry.union_all()
     print(f"STAGE boundary_lookup_seconds={time.perf_counter()-boundary_started_at:.2f}", flush=True)
     features_started_at = time.perf_counter()
+    query_geometry = boundary
+    if args.regional_context:
+        local_crs = boundary_gdf.estimate_utm_crs()
+        if local_crs is None:
+            raise RuntimeError("Could not estimate projection for surrounding region")
+        project_local = Transformer.from_crs("EPSG:4326", local_crs, always_xy=True).transform
+        project_geographic = Transformer.from_crs(local_crs, "EPSG:4326", always_xy=True).transform
+        # Buffer in meters using a local metric projection, not latitude degrees.
+        query_geometry = transform(
+            project_geographic,
+            transform(project_local, boundary).buffer(args.regional_buffer_km * 1000),
+        )
+        print(
+            f"Regional context: {args.regional_buffer_km:g} km around focus boundary",
+            flush=True,
+        )
 
     if args.extract_file is not None:
         # Explicit opt-in; no Overpass queries when a local extract is selected.
         from osm_extract import extract_features
         features = extract_features(
-            args.extract_file, boundary, STREET_TYPES | PATH_TYPES, RAIL_TYPES
+            args.extract_file, query_geometry, STREET_TYPES | PATH_TYPES, RAIL_TYPES
         )
     else:
         ox.settings.requests_timeout = args.overpass_timeout
@@ -296,7 +316,7 @@ def load_geodata(args):
             "highway": sorted(STREET_TYPES | PATH_TYPES),
             "railway": sorted(RAIL_TYPES),
         }
-        plan = plan_polygon_queries(boundary)
+        plan = plan_polygon_queries(query_geometry)
         print(
             f"Query plan: {len(plan.polygons)} separate areas; "
             f"~{plan.projected_hull_km2:.1f} km2 total coverage",
@@ -368,7 +388,12 @@ def create_svg(args):
         boundary_gdf.crs, local_crs, always_xy=True
     ).transform
     boundary_xy = transform(project, boundary)
-    xmin, ymin, xmax, ymax = boundary_xy.bounds
+    context_extent_xy = (
+        boundary_xy.buffer(args.regional_buffer_km * 1000)
+        if args.regional_context else boundary_xy
+    )
+    context_ring_xy = context_extent_xy.difference(boundary_xy) if args.regional_context else None
+    xmin, ymin, xmax, ymax = context_extent_xy.bounds
     width, height = args.width, args.height
     scale = min(
         (width - 2 * args.margin) / (xmax - xmin),
@@ -393,6 +418,13 @@ def create_svg(args):
         drawing.rect(insert=(0, 0), size=(width, height), fill="white", id="background")
     )
     groups = {
+        "context": drawing.g(
+            id="regional-context",
+            stroke="#bac1ca",
+            stroke_width=0.10,
+            opacity=0.7,
+            fill="none",
+        ),
         "roads": drawing.g(
             id="road-edges" if args.road_mode == "outline" else "road-centerlines",
             stroke=style["color"],
@@ -418,13 +450,21 @@ def create_svg(args):
             fill="none",
         ),
     }
+    # Keep focus-city borders prominent in regional mode.
+    if args.regional_context:
+        groups["boundary"]["stroke"] = "#35617e"
+        groups["boundary"]["stroke-width"] = max(
+            args.boundary_stroke or style["boundary"], 0.32
+        )
     # Hide boundary only at presentation level; its vector paths remain editable.
-    if not args.show_boundary:
+    if not args.show_boundary and not args.regional_context:
         groups["boundary"].update({"style": "display:none"})
     counts = {key: 0 for key in groups}
 
     def draw_geometry(geom_xy, category, outlines=False):
-        clipped = geom_xy.intersection(boundary_xy)
+        clipped = geom_xy.intersection(
+            context_ring_xy if category == "context" else boundary_xy
+        )
         iterator = iter_outlines(clipped) if outlines else iter_lines(clipped)
         for piece in iterator:
             if len(piece.coords) < 2:
@@ -449,6 +489,14 @@ def create_svg(args):
         highway = tag_values(item.get("highway"))
         railway = tag_values(item.get("railway"))
         geom_xy = transform(project, geom)
+        if args.regional_context and (highway & (STREET_TYPES | PATH_TYPES) or railway & RAIL_TYPES):
+            # Muted out-of-city lines are drawn as centerlines even in
+            # outline mode, avoiding expensive outer-area buffered unions.
+            # The focus-city geometry is rendered independently afterward.
+            if isinstance(geom_xy, (LineString, MultiLineString)):
+                draw_geometry(geom_xy, "context")
+            elif isinstance(geom_xy, (Polygon, MultiPolygon)):
+                draw_geometry(geom_xy.boundary, "context")
         if highway & STREET_TYPES:
             if ("service" not in highway or args.include_service) and (
                 "track" not in highway or args.include_tracks
@@ -495,7 +543,7 @@ def create_svg(args):
     # Always preserve geographic boundary geometry in the file for later toggling.
     draw_geometry(boundary_xy, "boundary", outlines=True)
 
-    for key in ("paths", "roads", "rail", "boundary"):
+    for key in ("context", "paths", "roads", "rail", "boundary"):
         drawing.add(groups[key])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     drawing.save(pretty=False)
@@ -529,6 +577,18 @@ def main():
         dest="show_boundary",
         action=argparse.BooleanOptionalAction,
         default=SHOW_BOUNDARY,
+    )
+    parser.add_argument(
+        "--regional-context",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Show muted surroundings beyond the focus city's municipal boundary",
+    )
+    parser.add_argument(
+        "--regional-buffer-km",
+        type=float,
+        default=3.0,
+        help="Regional context distance from municipal boundary in kilometers (0.5–10)",
     )
     parser.add_argument(
         "--show-rail",
@@ -583,6 +643,8 @@ def main():
     args = parser.parse_args()
     if not args.city.strip() or not args.state.strip() or not args.country.strip():
         parser.error("City, state, and country must be nonempty")
+    if not (0.5 <= args.regional_buffer_km <= 10):
+        parser.error("--regional-buffer-km must be between 0.5 and 10 km")
     if args.overpass_timeout <= 0:
         parser.error("--overpass-timeout must be positive")
     if (
