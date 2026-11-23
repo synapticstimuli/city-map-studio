@@ -323,6 +323,14 @@ def create_map(req: MapRequest, request: Request):
                 return public(existing)
 
         cached = reusable_map(OUTPUT_DIR, render_key)
+        if cached is not None and req.regional_context:
+            try:
+                if not svg_contains_nonempty_group(
+                    OUTPUT_DIR / cached["filename"], "regional-context"
+                ):
+                    cached = None
+            except (ElementTree.ParseError, OSError):
+                cached = None
         if cached is not None:
             jid = cached["id"]
             jobs[jid] = {
