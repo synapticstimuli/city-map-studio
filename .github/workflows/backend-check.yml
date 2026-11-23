@@ -178,8 +178,21 @@ jobs:
       - name: Test browser editing and downloaded SVG
         run: node browser-tests/smoke.cjs
 
+  windows_launcher:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify the one-click Windows launcher is callable
+        shell: pwsh
+        run: |
+          & '.\\Run City Map Studio.cmd' --help
+          if ($LASTEXITCODE -ne 0) { throw "Windows launcher failed" }
+
   local_release_candidate:
-    needs: [test, frontend, browser]
+    needs: [test, frontend, browser, windows_launcher]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
