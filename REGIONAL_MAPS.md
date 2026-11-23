@@ -90,3 +90,44 @@ restriction; a local Massachusetts extract is the alternative.
 
 When reporting a defect, capture the city inputs, selected road mode,
 error text, and whether it occurred on first generation or cache reuse.
+
+## Troubleshooting: Regional selected but surroundings absent
+
+If **Regional surroundings** remains disabled after generating a Regional map,
+the loaded SVG does not contain the expected `regional-context` group.
+An important cause is an older local backend on port 8001: a v2.1 API
+silently ignores the new regional request fields and generates a City-only
+map. The updated v2.2 preview now rejects that condition.
+
+Check the running backend in a PowerShell window:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8001/api/health |
+  ConvertTo-Json -Depth 5
+```
+
+Expected: `version: "2.2.0"` and `capabilities.regional_context: true`.
+If you see v2.1.0 or no `capabilities`, stop the old Python frontend and
+backend terminals with Ctrl+C. Then, from the separate regional test folder:
+
+```powershell
+git fetch origin
+git switch --detach origin/agent/regional-context-v2-2
+py -3.12 launch_local.py
+```
+
+The launcher now refuses to start when ports 8000 or 8001 are already
+occupied, to prevent frontend/backend cross-version mixing. Do not kill
+unrelated services indiscriminately. If the page was open during updates,
+reload it with **Ctrl+Shift+R**.
+
+The backend explicitly checks that new Regional SVGs have a **populated**
+`regional-context` group before saving their metadata; it will report a
+generation error instead of registering an incorrectly tagged City-only map.
+The frontend also checks backend capabilities and SVG content before
+reporting success.
+
+If the API reports 2.2.0 but the problem remains, capture the **exact error
+message**, recent job log in `backend/generated_maps`, and a screenshot.
+A configured regional PBF is not required for small cities; the default
+Overpass retrieval may still be refused by geographic area safeguards.
