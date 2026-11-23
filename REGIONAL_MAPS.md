@@ -20,6 +20,27 @@ and surrounding roads/paths/railways are drawn in a muted grey.
    `regional-context` group, which can be restyled or removed in Illustrator
    and Inkscape.
 
+## Print framing — focus first
+
+Regional mode now uses two separate extents:
+
+- **Acquisition extent:** the existing 3 km buffer determines which outside
+  streets are loaded (and retains the same bounded Overpass safeguards).
+- **Display extent:** the *city boundary bounding box* sets the page scale,
+  centered exactly on the paper. The city fills 78% of the limiting page
+  dimension without stretching; all visible surroundings are clipped to the
+  centered 95%-of-page window.
+
+The page frame is intentionally distinct from the data buffer: neither
+the size nor shape of the surrounding query can shrink the focus city.
+At extreme city aspect ratios the city may occupy less than 78% in the
+other dimension (preserving geographic proportions). If the 3 km buffer
+does not supply streets all the way to the print-window edge, the context
+will naturally stop before 95%, rather than fabricate streets.
+
+The City-only layout and its original paper margins remain unchanged.
+Regional exports still preserve the independent `regional-context` group.
+
 ## Design and safety
 
 - The city boundary is made visible by default in Regional mode and styled
