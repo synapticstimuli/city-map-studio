@@ -31,6 +31,18 @@
         include_paths: true,
         show_boundary: false,
       };
+      if (body.regional_context) {
+        const healthResponse = await fetch(`${base}/api/health`, { cache: "no-store" });
+        if (!healthResponse.ok) {
+          throw new Error("Regional generation requires a running v2.2 backend.");
+        }
+        const health = await healthResponse.json();
+        if (!health.capabilities?.regional_context) {
+          throw new Error(
+            "The frontend is using the Regional feature, but the backend on port 8001 is an older City Map Studio version. Stop old servers, then restart the Regional preview launcher."
+          );
+        }
+      }
       const created = await fetch(`${base}/api/maps`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -39,9 +51,19 @@
       const job = await created.json();
       if (!created.ok) throw new Error(JSON.stringify(job.detail || job));
       const renderComplete = async (status) => {
+        if (body.regional_context && status.regional_context !== true) {
+          throw new Error(
+            "The backend returned a City-only map for a Regional request. Restart the v2.2 backend and retry."
+          );
+        }
         const url = `${base}${status.download_url}`;
         el("genStatus").textContent = `${status.city} ready. Loading preview...`;
         await loadGeneratedMap(url, body, body.road_mode);
+        if (body.regional_context && !document.querySelector("#mapMount svg #regional-context")) {
+          throw new Error(
+            "The returned SVG has no regional-context layer. Check the generator log and backend version."
+          );
+        }
         const timing = status.total_seconds != null
           ? ` (queue ${status.queue_seconds ?? "?"}s; generation ${status.generation_seconds ?? "?"}s)`
           : status.cache_hit ? " (cached)" : "";
