@@ -22,7 +22,7 @@ def group_coordinate_bounds(group):
         points.extend(
             (float(x), float(y))
             for x, y in re.findall(
-                r"[ML](-?\\d+(?:\\.\\d+)?),(-?\\d+(?:\\.\\d+)?)",
+                r"[ML](-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)",
                 path.get("d", ""),
             )
         )
