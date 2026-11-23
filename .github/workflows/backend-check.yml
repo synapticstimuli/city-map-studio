@@ -9,6 +9,7 @@ on:
       - "generator-panel.js"
       - "config.js"
       - "index.html"
+      - "browser-tests/**"
       - ".github/workflows/backend-check.yml"
 jobs:
   test:
@@ -140,3 +141,37 @@ jobs:
             benchmark_results/monaco_centerline.svg
             benchmark_results/monaco_outline.svg
           retention-days: 14
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install browser automation dependencies
+        run: |
+          npm install --no-save --no-package-lock playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Start static site
+        run: |
+          python -m http.server 8000 --bind 127.0.0.1 > /tmp/city_map_http.log 2>&1 &
+          python - <<'PY'
+          from urllib.request import urlopen
+          import time
+          for attempt in range(50):
+              try:
+                  urlopen("http://127.0.0.1:8000", timeout=2)
+                  print("Local frontend ready")
+                  break
+              except OSError:
+                  time.sleep(0.2)
+          else:
+              raise RuntimeError("Frontend did not start")
+          PY
+      - name: Test browser editing and downloaded SVG
+        run: node browser-tests/smoke.cjs
