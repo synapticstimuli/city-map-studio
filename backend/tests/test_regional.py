@@ -59,25 +59,28 @@ class RegionalRenderTests(unittest.TestCase):
 
     def test_city_only_and_regional_export_layers(self):
         for regional in (False, True):
-            with self.subTest(regional=regional):
-                args = self.args(regional)
-                self.seed(args)
-                with patch.object(ox, "geocode_to_gdf", side_effect=AssertionError("Network geocoding")), \
-                     patch.object(ox.features, "features_from_polygon", side_effect=AssertionError("Overpass")):
-                    create_svg(args)
-                root = ET.parse(args.output).getroot()
-                nodes = {node.get("id"): node for node in root.iter() if node.get("id")}
-                self.assertIn("road-centerlines", nodes)
-                self.assertIn("city-boundary", nodes)
-                self.assertGreater(len(list(nodes["road-centerlines"])), 0)
-                if regional:
-                    self.assertIn("regional-context", nodes)
-                    self.assertGreater(len(list(nodes["regional-context"])), 0)
-                    # Focus boundary is visible and emphasized for regional output.
-                    self.assertNotIn("display:none", nodes["city-boundary"].get("style", ""))
-                else:
-                    self.assertNotIn("regional-context", nodes)
-                    self.assertIn("display:none", nodes["city-boundary"].get("style", ""))
+            for road_mode in ("centerline", "outline"):
+                with self.subTest(regional=regional, road_mode=road_mode):
+                    args = self.args(regional)
+                    args.road_mode = road_mode
+                    args.output = self.root / f"{road_mode}_{'regional' if regional else 'city'}.svg"
+                    self.seed(args)
+                    with patch.object(ox, "geocode_to_gdf", side_effect=AssertionError("Network geocoding")), \
+                         patch.object(ox.features, "features_from_polygon", side_effect=AssertionError("Overpass")):
+                        create_svg(args)
+                    root = ET.parse(args.output).getroot()
+                    nodes = {node.get("id"): node for node in root.iter() if node.get("id")}
+                    self.assertIn("road-centerlines" if road_mode == "centerline" else "road-edges", nodes)
+                    self.assertIn("city-boundary", nodes)
+                    self.assertGreater(len(list(nodes["road-centerlines" if road_mode == "centerline" else "road-edges"])), 0)
+                    if regional:
+                        self.assertIn("regional-context", nodes)
+                        self.assertGreater(len(list(nodes["regional-context"])), 0)
+                        # Focus boundary is visible and emphasized for regional output.
+                        self.assertNotIn("display:none", nodes["city-boundary"].get("style", ""))
+                    else:
+                        self.assertNotIn("regional-context", nodes)
+                        self.assertIn("display:none", nodes["city-boundary"].get("style", ""))
 
 
 if __name__ == "__main__":
