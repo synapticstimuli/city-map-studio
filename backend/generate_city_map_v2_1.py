@@ -29,6 +29,7 @@ from pyproj import Transformer
 from shapely.geometry import (
     GeometryCollection,
     LineString,
+    box,
     MultiLineString,
     MultiPolygon,
     Polygon,
@@ -54,6 +55,11 @@ OVERPASS_TIMEOUT_SECONDS = 300
 PAGE_WIDTH_MM = 420
 PAGE_HEIGHT_MM = 297
 MARGIN_MM = 18
+
+# Regional print composition: the focus-city bounding box occupies at most
+# 78% of the page in its limiting dimension; surroundings clip to 95%.
+REGIONAL_FOCUS_FILL = 0.78
+REGIONAL_OUTER_FILL = 0.95
 
 # Line widths are SVG output units, i.e. millimeters given our SVG viewBox.
 STYLES = {
@@ -388,19 +394,50 @@ def create_svg(args):
         boundary_gdf.crs, local_crs, always_xy=True
     ).transform
     boundary_xy = transform(project, boundary)
-    context_extent_xy = (
-        boundary_xy.buffer(args.regional_buffer_km * 1000)
-        if args.regional_context else boundary_xy
-    )
-    context_ring_xy = context_extent_xy.difference(boundary_xy) if args.regional_context else None
-    xmin, ymin, xmax, ymax = context_extent_xy.bounds
     width, height = args.width, args.height
-    scale = min(
-        (width - 2 * args.margin) / (xmax - xmin),
-        (height - 2 * args.margin) / (ymax - ymin),
-    )
-    left = (width - (xmax - xmin) * scale) / 2
-    top = (height - (ymax - ymin) * scale) / 2
+    xmin, ymin, xmax, ymax = boundary_xy.bounds
+    if args.regional_context:
+        # Compose the artwork around the *focus city*, not the 3 km data
+        # buffer. Centring its bounding box (rather than its area centroid)
+        # makes the focus city visually centered on the printed page.
+        city_width, city_height = xmax - xmin, ymax - ymin
+        if city_width <= 0 or city_height <= 0:
+            raise RuntimeError("Focus city has a degenerate projected boundary")
+        scale = min(
+            width * REGIONAL_FOCUS_FILL / city_width,
+            height * REGIONAL_FOCUS_FILL / city_height,
+        )
+        focus_cx, focus_cy = (xmin + xmax) / 2, (ymin + ymax) / 2
+        # This is a *display* window, not a new geographic acquisition area.
+        # Local data still comes from the existing bounded 3 km buffer.
+        display_width = width * REGIONAL_OUTER_FILL / scale
+        display_height = height * REGIONAL_OUTER_FILL / scale
+        display_window_xy = box(
+            focus_cx - display_width / 2,
+            focus_cy - display_height / 2,
+            focus_cx + display_width / 2,
+            focus_cy + display_height / 2,
+        )
+        context_ring_xy = display_window_xy.difference(boundary_xy)
+        # Frame conversion: the focus-city bounding box center maps to the
+        # exact page center, with surroundings remaining inside 95% bounds.
+        xmin = focus_cx - width / (2 * scale)
+        ymax = focus_cy + height / (2 * scale)
+        left = top = 0.0
+        print(
+            f"Regional framing: focus {REGIONAL_FOCUS_FILL:.0%} max fill; "
+            f"outer context clipped to {REGIONAL_OUTER_FILL:.0%} of page",
+            flush=True,
+        )
+    else:
+        # Preserve City-only print layout and historical margin behaviour.
+        scale = min(
+            (width - 2 * args.margin) / (xmax - xmin),
+            (height - 2 * args.margin) / (ymax - ymin),
+        )
+        left = (width - (xmax - xmin) * scale) / 2
+        top = (height - (ymax - ymin) * scale) / 2
+        context_ring_xy = None
     style = STYLES[args.style]
 
     drawing = svgwrite.Drawing(
