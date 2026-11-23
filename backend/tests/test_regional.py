@@ -1,5 +1,6 @@
 """Offline end-to-end checks for City-only and Regional SVG exports."""
 import sys
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,25 @@ import geopandas as gpd
 import osmnx as ox
 from shapely.geometry import Polygon, LineString
 from generate_city_map_v2_1 import create_svg
+
+
+def group_coordinate_bounds(group):
+    """Read the SVG path coordinates emitted by City Map Studio."""
+    points = []
+    for path in group.findall(".//{http://www.w3.org/2000/svg}path"):
+        points.extend(
+            (float(x), float(y))
+            for x, y in re.findall(
+                r"[ML](-?\\d+(?:\\.\\d+)?),(-?\\d+(?:\\.\\d+)?)",
+                path.get("d", ""),
+            )
+        )
+    if not points:
+        raise AssertionError("SVG group contains no path coordinates")
+    return (
+        min(x for x, _ in points), min(y for _, y in points),
+        max(x for x, _ in points), max(y for _, y in points),
+    )
 
 
 class RegionalRenderTests(unittest.TestCase):
@@ -76,6 +96,23 @@ class RegionalRenderTests(unittest.TestCase):
                     if regional:
                         self.assertIn("regional-context", nodes)
                         self.assertGreater(len(list(nodes["regional-context"])), 0)
+                        # The focus-city BBOX is centered and fills 78% of
+                        # the limiting page dimension, independent of its
+                        # much larger geographic buffer.
+                        x0, y0, x1, y1 = group_coordinate_bounds(nodes["city-boundary"])
+                        city_fraction = max((x1 - x0) / args.width, (y1 - y0) / args.height)
+                        self.assertAlmostEqual(city_fraction, 0.78, places=3)
+                        self.assertAlmostEqual((x0 + x1) / 2, args.width / 2, places=2)
+                        self.assertAlmostEqual((y0 + y1) / 2, args.height / 2, places=2)
+
+                        # All surrounding paths stay within the inner 95%
+                        # print window, even though source data extends
+                        # beyond it. Context remains an independent SVG layer.
+                        cx0, cy0, cx1, cy1 = group_coordinate_bounds(nodes["regional-context"])
+                        self.assertGreaterEqual(cx0, args.width * 0.025 - 0.01)
+                        self.assertLessEqual(cx1, args.width * 0.975 + 0.01)
+                        self.assertGreaterEqual(cy0, args.height * 0.025 - 0.01)
+                        self.assertLessEqual(cy1, args.height * 0.975 + 0.01)
                         # Focus boundary is visible and emphasized for regional output.
                         self.assertNotIn("display:none", nodes["city-boundary"].get("style", ""))
                     else:
