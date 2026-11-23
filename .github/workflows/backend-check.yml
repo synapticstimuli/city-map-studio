@@ -177,3 +177,19 @@ jobs:
           PY
       - name: Test browser editing and downloaded SVG
         run: node browser-tests/smoke.cjs
+
+  local_release_candidate:
+    needs: [test, frontend, browser]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create clean Windows-friendly source distribution
+        run: |
+          git archive --format=zip --output=city-map-studio-v2.1-local-rc.zip HEAD
+          unzip -l city-map-studio-v2.1-local-rc.zip | grep "Run City Map Studio.cmd"
+          unzip -l city-map-studio-v2.1-local-rc.zip | grep "launch_local.py"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: city-map-studio-v2.1-local-release-candidate
+          path: city-map-studio-v2.1-local-rc.zip
+          retention-days: 30
