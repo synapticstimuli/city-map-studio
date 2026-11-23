@@ -15,7 +15,8 @@ class CacheReuseTest(unittest.TestCase):
     def request(self, **kwargs):
         fields = dict(city="Somerville", county="Middlesex", state="Massachusetts",
                       country="USA", style="fine", road_mode="outline",
-                      include_paths=True, show_boundary=False)
+                      include_paths=True, show_boundary=False,
+                      regional_context=False, regional_buffer_km=3.0)
         fields.update(kwargs)
         return SimpleNamespace(**fields)
 
@@ -62,7 +63,8 @@ class CacheReuseTest(unittest.TestCase):
     def test_options_change_render_key(self):
         original = request_identity(self.request())[1]
         for field, value in [("style", "bold"), ("road_mode", "centerline"),
-                             ("include_paths", False), ("show_boundary", True)]:
+                             ("include_paths", False), ("show_boundary", True),
+                             ("regional_context", True), ("regional_buffer_km", 5.0)]:
             self.assertNotEqual(original, request_identity(self.request(**{field: value}))[1])
 
     def test_match_and_unsafe_metadata(self):
