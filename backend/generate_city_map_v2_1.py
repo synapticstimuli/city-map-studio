@@ -504,7 +504,9 @@ def create_svg(args):
                 if args.road_mode == "outline":
                     poly = projected_polygon(geom_xy, highway, ROAD_HALF_WIDTH_M, 3.5)
                     if poly is not None:
-                        road_shapes.append(poly)
+                        focused_poly = poly.intersection(boundary_xy)
+                        if not focused_poly.is_empty:
+                            road_shapes.append(focused_poly)
                 elif isinstance(geom_xy, (LineString, MultiLineString)):
                     draw_geometry(geom_xy, "roads")
                 elif isinstance(geom_xy, (Polygon, MultiPolygon)):
@@ -513,7 +515,9 @@ def create_svg(args):
             if args.road_mode == "outline":
                 poly = projected_polygon(geom_xy, highway, PATH_HALF_WIDTH_M, 1.0)
                 if poly is not None:
-                    path_shapes.append(poly)
+                    focused_poly = poly.intersection(boundary_xy)
+                    if not focused_poly.is_empty:
+                        path_shapes.append(focused_poly)
             elif isinstance(geom_xy, (LineString, MultiLineString)):
                 draw_geometry(geom_xy, "paths")
             elif isinstance(geom_xy, (Polygon, MultiPolygon)):
