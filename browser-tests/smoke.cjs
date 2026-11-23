@@ -22,6 +22,29 @@ const assert = require("node:assert/strict");
     assert.equal(await page.locator("#regionalLayer").isDisabled(), true);
     await page.locator("#genScope").selectOption("regional");
     assert.equal(await page.locator("#genScope").inputValue(), "regional");
+    // Simulate a v2.1 backend: the Regional frontend must reject it before
+    // posting a map job, rather than silently accepting a City-only map.
+    let posted = false;
+    await page.route("**/api/health", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        headers: { "access-control-allow-origin": "*" },
+        body: JSON.stringify({ status: "ok", version: "2.1.0" }),
+      })
+    );
+    await page.route("**/api/maps", (route) => {
+      posted = true;
+      return route.abort();
+    });
+    await page.locator("#genCity").fill("Watertown");
+    await page.locator("#generateMap").click();
+    await page.waitForFunction(() =>
+      document.querySelector("#genStatus")?.textContent.includes("older City Map Studio")
+    );
+    assert.equal(posted, false, "Frontend should not post to an old backend");
+    await page.unroute("**/api/health");
+    await page.unroute("**/api/maps");
     await page.locator("#genScope").selectOption("city");
 
 
