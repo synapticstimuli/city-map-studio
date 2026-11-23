@@ -18,6 +18,12 @@ const assert = require("node:assert/strict");
     }, { timeout: 20000 });
     assert.equal(await page.locator("#mapTitle").textContent(), "Somerville");
     assert.equal(await page.locator("#export").isEnabled(), true);
+    assert.equal(await page.locator("#genScope").inputValue(), "city");
+    assert.equal(await page.locator("#regionalLayer").isDisabled(), true);
+    await page.locator("#genScope").selectOption("regional");
+    assert.equal(await page.locator("#genScope").inputValue(), "regional");
+    await page.locator("#genScope").selectOption("city");
+
 
     await page.locator('[data-preset="bold"]').click();
     assert.equal(await page.locator("#roadWidth").inputValue(), "0.28");
