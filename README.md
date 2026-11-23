@@ -1,25 +1,61 @@
-# City Map Studio — Cloudflare Pages MVP
+# City Map Studio v2.1 — Local map creation and SVG editing
 
-A static interactive SVG viewer and styling editor for three existing generated maps: Somerville, Cambridge, Boston.
+Create, style, view, and export editable street maps. The frontend is a static
+website; city generation uses a Python API bound to your local computer.
+
+## Run locally on Windows
+
+1. Install Python 3.12 (if not already installed).
+2. Double-click **Run City Map Studio.cmd**, or run `py -3.12 launch_local.py`
+   in PowerShell.
+3. The launcher creates a private `.venv` if needed, installs the core
+   dependencies on first run, starts both localhost servers, and opens
+   **http://127.0.0.1:8000**.
+4. To stop the app, press Ctrl+C in the launcher terminal.
+
+The startup script binds the API to **127.0.0.1:8001** and the viewer to
+**127.0.0.1:8000**. It does not expose generation on the public internet.
+If you have an older local server running, stop that first to avoid port conflicts.
 
 ## Features
-- Select city, show/hide road/path/rail/boundary layers
-- Fine / Detailed / Bold line weights, manual stroke-weight sliders
-- Zoom/pan; export styled, editable SVG to your computer
-- No account, map server, API token, or database required
 
-## Preview locally
-From this directory run `py -m http.server 8000` (Windows with Python installed), then visit `http://localhost:8000`. Do not double-click `index.html`, because browsers restrict `fetch()` on `file://` URLs.
+- City generation via OpenStreetMap/Nominatim and bounded Overpass requests.
+- Optional local Geofabrik regional OSM extract import (requires `osmium`).
+- Reuse geographic GeoJSON and previously generated SVGs, with source-scoped
+  caching, checksum verification, and duplicate-request coalescing.
+- Editable road, footpath, rail and boundary layers; centered and outline modes.
+- Style presets, paper sizes, portrait/landscape preview, and editable SVG export.
+- Local saved-map library, job queue details, and diagnostic logs.
 
-## Deploy with Cloudflare Pages
-1. Create a dedicated GitHub repository (suggested: `city-map-studio`). Push **all files and the maps folder**.
-2. In the Cloudflare dashboard, go to **Workers & Pages → Create application → Pages → Connect to Git**.
-3. Select the GitHub repository; use no framework, leave build command blank, output directory `/` (repository root) for a plain static site. Set production branch to `main`.
-4. Deploy. Future GitHub pushes automatically redeploy the site.
+## Optional large-city data
 
-## Limitations
-- Uses pre-generated SVGs: the city list does **not** run OSMnx/Overpass in the browser. Add new cities by generating an SVG with your Python script, copying it into `maps/`, and updating `files` and the dropdown in `app.js`/`index.html`.
-- Centerline/outline switching is not built in because these source SVGs contain roadway outlines only. Generate or prepackage a centerline SVG for each city to enable mode switching.
-- Outlines represent estimated buffered road widths, not actual surveyed curb edges.
-- Large SVG files can take time to load on mobile devices. Optimizing path data and using compressed content can help.
-- OSM attribution and applicable ODbL requirements must be preserved in any public use and downloads.
+Large locations such as **Los Angeles** may exceed the safe public Overpass
+request budget. Obtain a regional PBF and follow
+[backend/REGIONAL_EXTRACTS.md](backend/REGIONAL_EXTRACTS.md). The importer does
+not automatically download multi-hundred-megabyte files. It uses the local
+file configured by `OSM_EXTRACT_FILE` when present.
+
+## Tests and troubleshooting
+
+- [Windows testing guide](TESTING_WINDOWS.md)
+- [Real PBF validation evidence](REAL_DATA_VALIDATION.md)
+- [Release gates](RELEASE_PLAN.md)
+- Backend/API offline tests: `python -m unittest discover -s backend/tests -v`
+- Local smoke test: `.venv\\Scripts\\python.exe backend\\smoke_local.py`
+- GitHub Actions runs Python tests, JavaScript syntax checks and a headless
+  Chromium test covering map load, styling and SVG download.
+- Real network-dependent Monaco PBF test is available by manually dispatching
+  the GitHub Actions **Backend checks** workflow; not a required push gate.
+- Job logs: `backend/generated_maps/<job-id>.log`
+
+## Public website / limitations
+
+A static Cloudflare Pages deployment can host the viewer and bundled SVG
+examples. It cannot run the local FastAPI/OSMnx generator by itself. The
+hosted generator is intentionally disabled until a secured persistent API
+is provisioned with authentication, quotas, abuse controls, and storage.
+Do not expose development port 8001 to the internet.
+
+OpenStreetMap data © OpenStreetMap contributors, under the ODbL.
+Roadway outlines are estimated buffers of mapped centerlines, not surveyed
+curb/road boundaries.
