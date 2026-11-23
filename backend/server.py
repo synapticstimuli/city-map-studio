@@ -60,7 +60,7 @@ ALLOWED_ORIGINS = [
 # API INITIALIZATION
 # ==========================================
 
-app = FastAPI(title="City Map Studio API", version="2.1.0")
+app = FastAPI(title="City Map Studio API", version="2.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -266,8 +266,9 @@ def health():
     return {
         "status": "ok",
         "application": "City Map Studio",
-        "version": "2.1.0",
+        "version": "2.2.0",
         "environment": APP_ENV,
+        "capabilities": {"regional_context": True, "regional_context_layer": "regional-context"},
     }
 
 
@@ -305,6 +306,8 @@ def create_map(req: MapRequest, request: Request):
                 "download_url": f"/api/library/{jid}/download",
                 "render_key": render_key,
                 "cache_hit": True,
+                "regional_context": bool(cached.get("regional_context", False)),
+                "regional_buffer_km": cached.get("regional_buffer_km", 3.0),
             }
             return public(jobs[jid])
 
@@ -322,6 +325,8 @@ def create_map(req: MapRequest, request: Request):
             "render_key": render_key,
             "source_key": source_key,
             "cache_hit": False,
+            "regional_context": req.regional_context,
+            "regional_buffer_km": req.regional_buffer_km,
             "_queued_monotonic": time.monotonic(),
             "created_at": datetime.now(timezone.utc).isoformat(),
             "city": req.city,
