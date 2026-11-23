@@ -123,6 +123,30 @@ class APIFlowTests(unittest.TestCase):
         self.assertIn("OSM_EXTRACT_FILE", status["error"])
         self.assertTrue((self.output / f"{created['id']}.log").is_file())
 
+    def test_regional_api_passes_extent_to_generator(self):
+        request = self.req(regional_context=True, regional_buffer_km=5.0)
+        created, _ = self.submit_without_running(request)
+
+        def fake_run(command, **kwargs):
+            self.assertIn("--regional-context", command)
+            self.assertEqual(command[command.index("--regional-buffer-km") + 1], "5.0")
+            output = Path(command[command.index("--output") + 1])
+            output.write_text('<svg xmlns="http://www.w3.org/2000/svg"/>', encoding="utf-8")
+            class Result:
+                returncode = 0
+            return Result()
+
+        with patch.object(server.subprocess, "run", side_effect=fake_run):
+            server.run_job(created["id"], request)
+        self.assertEqual(server.map_status(created["id"])["status"], "complete")
+        saved = __import__("json").loads((self.output / (created["id"] + ".json")).read_text())
+        self.assertTrue(saved["regional_context"])
+        self.assertEqual(saved["regional_buffer_km"], 5.0)
+
+    def test_regional_extent_is_bounded(self):
+        with self.assertRaises(ValueError):
+            self.req(regional_context=True, regional_buffer_km=12.0)
+
     def test_remote_client_cannot_generate(self):
         with self.assertRaises(server.HTTPException) as caught:
             server.create_map(self.req(), SimpleNamespace(client=SimpleNamespace(host="198.51.100.2")))
