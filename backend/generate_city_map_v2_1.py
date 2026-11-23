@@ -543,7 +543,9 @@ def create_svg(args):
     # Always preserve geographic boundary geometry in the file for later toggling.
     draw_geometry(boundary_xy, "boundary", outlines=True)
 
-    for key in ("context", "paths", "roads", "rail", "boundary"):
+    if args.regional_context:
+        drawing.add(groups["context"])
+    for key in ("paths", "roads", "rail", "boundary"):
         drawing.add(groups[key])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     drawing.save(pretty=False)
