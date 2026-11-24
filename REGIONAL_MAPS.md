@@ -31,6 +31,18 @@ Regional mode now uses two separate extents:
   dimension without stretching; all visible surroundings are clipped to the
   centered 95%-of-page window.
 
+For a **cold** geographic cache, the Overpass query is further trimmed
+to the intersection of the configured 3 km buffer and the visible print
+frame. Streets that cannot appear on the page are not requested. This
+reduces unnecessary downloaded geography, especially for small cities with
+large buffered surroundings. Previously cached full-region data remains
+valid and may still be reused. Download speed is affected by Overpass server
+load and network latency; no guaranteed speedup is claimed.
+
+The API now reports coarse stages (boundary lookup, street retrieval,
+rendering, export) during long-running jobs, with exact timings in each
+job's log under `backend/generated_maps`.
+
 The page frame is intentionally distinct from the data buffer: neither
 the size nor shape of the surrounding query can shrink the focus city.
 At extreme city aspect ratios the city may occupy less than 78% in the
