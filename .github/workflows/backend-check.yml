@@ -1,0 +1,208 @@
+name: Backend checks
+on:
+  workflow_dispatch:
+  push:
+    branches: [agent/cache-first-release, agent/reconciled-v2-1, agent/regional-context-v2-2]
+  pull_request:
+    paths:
+      - "backend/**"
+      - "app.js"
+      - "generator-panel.js"
+      - "config.js"
+      - "index.html"
+      - "browser-tests/**"
+      - ".github/workflows/backend-check.yml"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install lightweight API test dependencies
+        run: python -m pip install -r backend/requirements-extract.txt
+      - name: Compile backend sources
+        run: python -m py_compile backend/server.py backend/cache_reuse.py backend/query_planner.py backend/osm_extract.py backend/benchmark_extract.py backend/smoke_local.py backend/generate_city_map_v2_1.py launch_local.py
+      - name: Run offline cache tests
+        run: python -m unittest discover -s backend/tests -v
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check browser JavaScript syntax
+        run: |
+          node --check config.js
+          node --check app.js
+          node --check generator-panel.js
+      - name: Check frontend configuration is loaded before application scripts
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path("index.html").read_text(encoding="utf-8")
+          assert text.index('src="config.js') < text.index('src="app.js') < text.index('src="generator-panel.js')
+          print("Frontend script order verified")
+          PY
+
+  real_pbf_smoke:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install regional import dependencies
+        run: python -m pip install -r backend/requirements-extract.txt
+      - name: Download tiny real-world Geofabrik Monaco PBF
+        run: |
+          mkdir -p benchmark_results
+          curl --fail --location --retry 2 --max-time 120 \
+            --output benchmark_results/monaco-latest.osm.pbf \
+            https://download.geofabrik.de/europe/monaco-latest.osm.pbf
+          test "$(stat -c %s benchmark_results/monaco-latest.osm.pbf)" -gt 100000
+      - name: Create small Monaco-area test boundary
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import geopandas as gpd
+          from shapely.geometry import box
+          boundary = gpd.GeoDataFrame(
+              geometry=[box(7.39, 43.70, 7.46, 43.77)], crs="EPSG:4326"
+          )
+          boundary.to_file("benchmark_results/monaco_test_bbox.geojson", driver="GeoJSON")
+          print("Using a Monaco-area bounding box, NOT an official city boundary")
+          PY
+      - name: Benchmark real PBF import and clipping
+        run: |
+          python backend/benchmark_extract.py \
+            --extract benchmark_results/monaco-latest.osm.pbf \
+            --boundary benchmark_results/monaco_test_bbox.geojson \
+            --name "Monaco-area bounding box" \
+            --output benchmark_results/monaco_import.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("benchmark_results/monaco_import.json").read_text())
+          assert report["feature_rows"] > 0, report
+          assert report["road_or_path_rows"] > 0, report
+          assert report["extract_bytes"] > 100000, report
+          print("REAL PBF smoke test: passed", report)
+          PY
+      - name: Render real regional data in both road modes
+        run: |
+          mkdir -p benchmark_results/cache/Monaco_Location_Monaco_Monaco
+          cp benchmark_results/monaco_test_bbox.geojson \
+            benchmark_results/cache/Monaco_Location_Monaco_Monaco/boundary.geojson
+          python backend/generate_city_map_v2_1.py \
+            --city Monaco --county "" --state Monaco --country Monaco \
+            --road-mode centerline \
+            --extract-file benchmark_results/monaco-latest.osm.pbf \
+            --cache-dir benchmark_results/cache \
+            --output benchmark_results/monaco_centerline.svg
+          python backend/generate_city_map_v2_1.py \
+            --city Monaco --county "" --state Monaco --country Monaco \
+            --road-mode outline \
+            --extract-file benchmark_results/monaco-latest.osm.pbf \
+            --cache-dir benchmark_results/cache \
+            --output benchmark_results/monaco_outline.svg
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import xml.etree.ElementTree as ET
+          results = {}
+          for mode in ("centerline", "outline"):
+              path = Path(f"benchmark_results/monaco_{mode}.svg")
+              root = ET.parse(path).getroot()
+              ids = {item.attrib.get("id") for item in root.iter()}
+              road_group = "road-centerlines" if mode == "centerline" else "road-edges"
+              assert road_group in ids, ids
+              assert "railways" in ids, ids
+              assert "city-boundary" in ids, ids
+              paths = len(root.findall(".//{http://www.w3.org/2000/svg}path"))
+              assert paths > 100, (mode, paths)
+              results[mode] = {"svg_bytes": path.stat().st_size, "path_count": paths}
+          Path("benchmark_results/monaco_svg_summary.json").write_text(
+              json.dumps(results, indent=2), encoding="utf-8"
+          )
+          print("REAL PBF FULL SVG RENDER: passed", results)
+          PY
+      - name: Upload benchmark report
+        uses: actions/upload-artifact@v4
+        with:
+          name: monaco-real-pbf-benchmark
+          path: |
+            benchmark_results/monaco_import.json
+            benchmark_results/monaco_test_bbox.geojson
+            benchmark_results/monaco_svg_summary.json
+            benchmark_results/monaco_centerline.svg
+            benchmark_results/monaco_outline.svg
+          retention-days: 14
+
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install browser automation dependencies
+        run: |
+          npm install --no-save --no-package-lock playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Start static site
+        run: |
+          python -m http.server 8000 --bind 127.0.0.1 > /tmp/city_map_http.log 2>&1 &
+          python - <<'PY'
+          from urllib.request import urlopen
+          import time
+          for attempt in range(50):
+              try:
+                  urlopen("http://127.0.0.1:8000", timeout=2)
+                  print("Local frontend ready")
+                  break
+              except OSError:
+                  time.sleep(0.2)
+          else:
+              raise RuntimeError("Frontend did not start")
+          PY
+      - name: Test browser editing and downloaded SVG
+        run: node browser-tests/smoke.cjs
+
+  windows_launcher:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify the one-click Windows launcher is callable
+        shell: pwsh
+        run: |
+          & '.\\Run City Map Studio.cmd' --help
+          if ($LASTEXITCODE -ne 0) { throw "Windows launcher failed" }
+
+  local_release_candidate:
+    needs: [test, frontend, browser, windows_launcher]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create clean Windows-friendly source distribution
+        run: |
+          git archive --format=zip --output=city-map-studio-v2.1-local-rc.zip HEAD
+          unzip -l city-map-studio-v2.1-local-rc.zip | grep "Run City Map Studio.cmd"
+          unzip -l city-map-studio-v2.1-local-rc.zip | grep "launch_local.py"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: city-map-studio-v2.1-local-release-candidate
+          path: city-map-studio-v2.1-local-rc.zip
+          retention-days: 30

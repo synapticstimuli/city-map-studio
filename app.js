@@ -14,6 +14,7 @@ const groups = {
   paths: "path-edges",
   rail: "railways",
   boundary: "city-boundary",
+  regionalLayer: "regional-context",
 };
 let svg = null,
   scale = 1,
@@ -73,6 +74,10 @@ async function loadCity() {
     svg = document.importNode(node, true);
 
     const isCenterline = svg.querySelector('[id="road-centerlines"]') !== null;
+    const hasRegionalContext = svg.querySelector('[id="regional-context"]') !== null;
+    $("regionalLayer").disabled = !hasRegionalContext;
+    $("regionalLayer").checked = hasRegionalContext;
+    $("boundary").checked = hasRegionalContext || $("boundary").checked;
 
     groups.roads = isCenterline ? "road-centerlines" : "road-edges";
 
@@ -290,6 +295,7 @@ $("resetStyle").addEventListener("click", () => {
   $("paths").checked = true;
   $("rail").checked = true;
   $("boundary").checked = false;
+  $("regionalLayer").checked = !$("regionalLayer").disabled;
 
   styleMap();
 });
@@ -403,12 +409,14 @@ function registerGeneratedMap(url, location, mode) {
   option.dataset.state = location.state;
   option.dataset.country = location.country;
   option.dataset.mode = mode;
+  option.dataset.regionalContext = String(Boolean(location.regional_context));
 
   const modeLabel = mode === "centerline" ? "Centerlines" : "Road outlines";
 
+  const extentLabel = location.regional_context ? "Regional" : "City-only";
   option.textContent =
     `${location.city}, ${location.state}, ` +
-    `${location.country} (${modeLabel})`;
+    `${location.country} (${modeLabel}, ${extentLabel})`;
 
   return key;
 }
@@ -440,6 +448,7 @@ function getGeneratedMapKey(location, mode) {
     location.state,
     location.country,
     mode,
+    location.regional_context ? `regional_${location.regional_buffer_km || 3}km` : "city",
   ].join("_");
 }
 

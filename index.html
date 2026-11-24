@@ -49,6 +49,14 @@
           </label>
 
           <label class="field">
+            Map extent
+            <select id="genScope">
+              <option value="city">City-only</option>
+              <option value="regional">Regional (3 km surroundings)</option>
+            </select>
+          </label>
+
+          <label class="field">
             Road rendering
             <select id="genMode">
               <option value="outline">Road outlines</option>
@@ -98,6 +106,9 @@
             ><input type="checkbox" id="rail" checked />Railways</label
           ><label class="toggle"
             ><input type="checkbox" id="boundary" />City boundary</label
+          >
+          <label class="toggle"
+            ><input type="checkbox" id="regionalLayer" checked disabled />Regional surroundings</label
           >
           <p class="note">
             Roads use buffered outlines from the supplied map files, not
@@ -199,8 +210,8 @@
         </div>
       </main>
     </div>
-    <script src="config.js"></script>
-    <script src="app.js"></script>
-    <script src="generator-panel.js"></script>
+    <script src="config.js?v=local-v22-rc1"></script>
+    <script src="app.js?v=local-v22-rc1"></script>
+    <script src="generator-panel.js?v=local-v22-rc1"></script>
   </body>
 </html>
