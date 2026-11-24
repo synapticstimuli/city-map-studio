@@ -192,6 +192,27 @@ def iter_outlines(geom):
         yield from iter_lines(geom)
 
 
+def regional_display_frame(boundary_xy, page_width, page_height):
+    """Return city-based scale and the projected 95%-of-page display window.
+
+    The city's bounding box is exactly centered; its limiting dimension
+    occupies 78% of the paper. Geographic fetching and rendering use the
+    identical frame to avoid downloading invisible streets.
+    """
+    xmin, ymin, xmax, ymax = boundary_xy.bounds
+    city_width, city_height = xmax - xmin, ymax - ymin
+    if city_width <= 0 or city_height <= 0:
+        raise ValueError("Focus city has a degenerate projected boundary")
+    scale = min(
+        page_width * REGIONAL_FOCUS_FILL / city_width,
+        page_height * REGIONAL_FOCUS_FILL / city_height,
+    )
+    cx, cy = (xmin + xmax) / 2, (ymin + ymax) / 2
+    half_w = page_width * REGIONAL_OUTER_FILL / (2 * scale)
+    half_h = page_height * REGIONAL_OUTER_FILL / (2 * scale)
+    return scale, box(cx - half_w, cy - half_h, cx + half_w, cy + half_h)
+
+
 def projected_polygon(geom, types, width_map, fallback):
     if isinstance(geom, (Polygon, MultiPolygon)):
         return geom
@@ -297,12 +318,19 @@ def load_geodata(args):
         project_local = Transformer.from_crs("EPSG:4326", local_crs, always_xy=True).transform
         project_geographic = Transformer.from_crs(local_crs, "EPSG:4326", always_xy=True).transform
         # Buffer in meters using a local metric projection, not latitude degrees.
-        query_geometry = transform(
-            project_geographic,
-            transform(project_local, boundary).buffer(args.regional_buffer_km * 1000),
-        )
+        city_metric = transform(project_local, boundary)
+        halo_metric = city_metric.buffer(args.regional_buffer_km * 1000)
+        _, print_frame = regional_display_frame(city_metric, args.width, args.height)
+        # Only acquire streets that can actually be shown on the page.
+        # Never broaden the configured geographic buffer.
+        useful_metric = halo_metric.intersection(print_frame)
+        if useful_metric.is_empty:
+            raise RuntimeError("Regional print frame does not intersect city buffer")
+        query_geometry = transform(project_geographic, useful_metric)
         print(
-            f"Regional context: {args.regional_buffer_km:g} km around focus boundary",
+            f"Regional context: {args.regional_buffer_km:g} km source buffer; "
+            f"printing-area query {useful_metric.area / 1_000_000:.1f} km2 "
+            f"of {halo_metric.area / 1_000_000:.1f} km2 possible",
             flush=True,
         )
 
@@ -397,26 +425,11 @@ def create_svg(args):
     width, height = args.width, args.height
     xmin, ymin, xmax, ymax = boundary_xy.bounds
     if args.regional_context:
-        # Compose the artwork around the *focus city*, not the 3 km data
-        # buffer. Centring its bounding box (rather than its area centroid)
-        # makes the focus city visually centered on the printed page.
-        city_width, city_height = xmax - xmin, ymax - ymin
-        if city_width <= 0 or city_height <= 0:
-            raise RuntimeError("Focus city has a degenerate projected boundary")
-        scale = min(
-            width * REGIONAL_FOCUS_FILL / city_width,
-            height * REGIONAL_FOCUS_FILL / city_height,
-        )
-        focus_cx, focus_cy = (xmin + xmax) / 2, (ymin + ymax) / 2
-        # This is a *display* window, not a new geographic acquisition area.
-        # Local data still comes from the existing bounded 3 km buffer.
-        display_width = width * REGIONAL_OUTER_FILL / scale
-        display_height = height * REGIONAL_OUTER_FILL / scale
-        display_window_xy = box(
-            focus_cx - display_width / 2,
-            focus_cy - display_height / 2,
-            focus_cx + display_width / 2,
-            focus_cy + display_height / 2,
+        # The exact same centered frame used by geographic acquisition.
+        scale, display_window_xy = regional_display_frame(boundary_xy, width, height)
+        focus_cx, focus_cy = (
+            (boundary_xy.bounds[0] + boundary_xy.bounds[2]) / 2,
+            (boundary_xy.bounds[1] + boundary_xy.bounds[3]) / 2,
         )
         context_ring_xy = display_window_xy.difference(boundary_xy)
         # Frame conversion: the focus-city bounding box center maps to the
