@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 
 CACHE_SCHEMA = 1
-RENDER_VERSION = "city-map-studio-svg-v2.1"
+RENDER_VERSION = "city-map-studio-svg-v2.2"
 PLACE_FIELDS = ("city", "county", "state", "country")
 OPTIONS = ("style", "road_mode", "include_paths", "show_boundary", "regional_context", "regional_buffer_km")
 
