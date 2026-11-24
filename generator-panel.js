@@ -84,8 +84,11 @@
         const queueText = status.status === "queued" && status.queue_position
           ? ` (queue position ${status.queue_position})`
           : "";
+        const stageText = status.status === "running" && status.stage
+          ? ` — ${status.stage}`
+          : "";
         el("genStatus").textContent =
-          `${status.city}: ${status.status}${queueText}…`;
+          `${status.city}: ${status.status}${queueText}${stageText}…`;
         if (status.status === "error")
           throw new Error(status.error || "Generation failed");
 
