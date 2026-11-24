@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import uuid
+from xml.etree import ElementTree
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -60,7 +61,7 @@ ALLOWED_ORIGINS = [
 # API INITIALIZATION
 # ==========================================
 
-app = FastAPI(title="City Map Studio API", version="2.1.0")
+app = FastAPI(title="City Map Studio API", version="2.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -88,6 +89,8 @@ class MapRequest(BaseModel):
 
     include_paths: bool = True
     show_boundary: bool = False
+    regional_context: bool = False
+    regional_buffer_km: float = Field(default=3.0, ge=0.5, le=10.0)
 
     @field_validator("city", "state", "county", "country")
     @classmethod
@@ -108,6 +111,55 @@ class MapRequest(BaseModel):
 
 def public(job):
     return {k: v for k, v in job.items() if k not in ("path", "_queued_monotonic")}
+
+
+def generation_stage(job_id: str) -> str:
+    """Derive a coarse progress stage from bounded local generator log data."""
+    log_path = OUTPUT_DIR / f"{job_id}.log"
+    try:
+        with log_path.open("rb") as stream:
+            length = stream.seek(0, 2)
+            stream.seek(max(0, length - 16384))
+            snippet = stream.read().decode("utf-8", errors="replace")
+    except OSError:
+        return "Starting generator"
+    signals = (
+        ("Fetching boundary:", "Resolving city boundary"),
+        ("Reusing cached boundary:", "Loading cached boundary"),
+        ("Fetching geographic component", "Downloading geographic data"),
+        ("Geographic download attempt", "Downloading geographic data"),
+        ("Importing local OSM extract", "Reading local regional extract"),
+        ("Using cached geographic data:", "Loading cached street data"),
+        ("STAGE feature_retrieval_seconds", "Preparing geographic cache"),
+        ("Cached geographic data:", "Preparing geographic cache"),
+        ("STAGE geographic_loading_seconds", "Rendering map"),
+        ("Merging ", "Rendering road outlines"),
+        ("STAGE svg_rendering_seconds", "Finalizing SVG export"),
+    )
+    matched = [(snippet.rfind(token), label) for token, label in signals]
+    position, label = max(matched, key=lambda item: item[0])
+    return label if position >= 0 else "Preparing geographic data"
+
+
+def svg_contains_nonempty_group(path: Path, group_id: str) -> bool:
+    """Stream-validate a populated SVG layer without loading the entire map."""
+    depth = 0
+    found_path = False
+    for event, node in ElementTree.iterparse(path, events=("start", "end")):
+        if event == "start":
+            if depth:
+                depth += 1
+                if node.tag.rsplit("}", 1)[-1] == "path":
+                    found_path = True
+            elif node.get("id") == group_id:
+                depth = 1
+        elif depth:
+            depth -= 1
+            if depth == 0:
+                return found_path
+        if event == "end":
+            node.clear()
+    return False
 
 
 def run_job(job_id: str, req: MapRequest):
@@ -144,6 +196,9 @@ def run_job(job_id: str, req: MapRequest):
         str(OVERPASS_TIMEOUT),
         "--include-paths" if req.include_paths else "--no-include-paths",
         "--show-boundary" if req.show_boundary else "--no-show-boundary",
+        "--regional-context" if req.regional_context else "--no-regional-context",
+        "--regional-buffer-km",
+        str(req.regional_buffer_km),
     ]
     if OSM_EXTRACT_FILE:
         command.extend(["--extract-file", OSM_EXTRACT_FILE])
@@ -186,6 +241,13 @@ def run_job(job_id: str, req: MapRequest):
                 + (lines[-1][:450] if lines else "Generator did not produce an SVG.")
             )
 
+        if req.regional_context and not svg_contains_nonempty_group(
+            destination, "regional-context"
+        ):
+            raise RuntimeError(
+                "The generator did not produce the required populated regional-context "
+                "SVG layer. The result was discarded; check the job log and backend version."
+            )
         if source_identity(OSM_EXTRACT_FILE) != expected_source_key:
             raise RuntimeError("OSM extract changed during generation; result discarded.")
         geography_key, render_key = request_identity(req, GENERATOR_SHA256, expected_source_key)
@@ -198,6 +260,8 @@ def run_job(job_id: str, req: MapRequest):
             "render_key": render_key,
             "include_paths": req.include_paths,
             "show_boundary": req.show_boundary,
+            "regional_context": req.regional_context,
+            "regional_buffer_km": req.regional_buffer_km,
             "id": job_id,
             "city": req.city,
             "county": req.county,
@@ -259,8 +323,9 @@ def health():
     return {
         "status": "ok",
         "application": "City Map Studio",
-        "version": "2.1.0",
+        "version": "2.2.0",
         "environment": APP_ENV,
+        "capabilities": {"regional_context": True, "regional_context_layer": "regional-context"},
     }
 
 
@@ -286,6 +351,14 @@ def create_map(req: MapRequest, request: Request):
                 return public(existing)
 
         cached = reusable_map(OUTPUT_DIR, render_key)
+        if cached is not None and req.regional_context:
+            try:
+                if not svg_contains_nonempty_group(
+                    OUTPUT_DIR / cached["filename"], "regional-context"
+                ):
+                    cached = None
+            except (ElementTree.ParseError, OSError):
+                cached = None
         if cached is not None:
             jid = cached["id"]
             jobs[jid] = {
@@ -298,6 +371,8 @@ def create_map(req: MapRequest, request: Request):
                 "download_url": f"/api/library/{jid}/download",
                 "render_key": render_key,
                 "cache_hit": True,
+                "regional_context": bool(cached.get("regional_context", False)),
+                "regional_buffer_km": cached.get("regional_buffer_km", 3.0),
             }
             return public(jobs[jid])
 
@@ -315,6 +390,8 @@ def create_map(req: MapRequest, request: Request):
             "render_key": render_key,
             "source_key": source_key,
             "cache_hit": False,
+            "regional_context": req.regional_context,
+            "regional_buffer_km": req.regional_buffer_km,
             "_queued_monotonic": time.monotonic(),
             "created_at": datetime.now(timezone.utc).isoformat(),
             "city": req.city,
@@ -336,7 +413,9 @@ def map_status(job_id: str):
                 j["status"] == "queued" and j["_queued_monotonic"] < job["_queued_monotonic"]
                 for j in jobs.values()
             ) + 1
-        return result
+    if result["status"] == "running":
+        result["stage"] = generation_stage(job_id)
+    return result
 
 
 @app.get("/api/maps/{job_id}/download")

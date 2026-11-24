@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import socket
 from pathlib import Path
 import subprocess
 import sys
@@ -23,6 +24,20 @@ VENV = ROOT / ".venv"
 PYTHON = VENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 FRONTEND_URL = "http://127.0.0.1:8000"
 BACKEND_URL = "http://127.0.0.1:8001/api/health"
+
+
+def require_free_local_ports():
+    """Refuse to connect the new frontend to an older local backend."""
+    for port in (8000, 8001):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError as exc:
+                raise RuntimeError(
+                    f"Port {port} is already occupied. Stop the old City Map Studio "
+                    "frontend/backend terminals before launching this preview; "
+                    "otherwise a new frontend may silently use the old backend."
+                ) from exc
 
 
 def ensure_environment():
@@ -81,6 +96,7 @@ def main():
     os.chdir(ROOT)
     children = []
     try:
+        require_free_local_ports()
         ensure_environment()
         backend = subprocess.Popen([
             str(PYTHON), "-m", "uvicorn", "server:app", "--app-dir", "backend",

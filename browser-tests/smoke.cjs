@@ -18,6 +18,69 @@ const assert = require("node:assert/strict");
     }, { timeout: 20000 });
     assert.equal(await page.locator("#mapTitle").textContent(), "Somerville");
     assert.equal(await page.locator("#export").isEnabled(), true);
+    assert.equal(await page.evaluate(() => window.CMS_GENERATOR_BUILD), "local-v22-rc1");
+    assert.equal(await page.locator("#genScope").inputValue(), "city");
+    assert.equal(await page.locator("#regionalLayer").isDisabled(), true);
+    await page.locator("#genScope").selectOption("regional");
+    assert.equal(await page.locator("#genScope").inputValue(), "regional");
+    // Simulate a v2.1 backend: the Regional frontend must reject it before
+    // posting a map job, rather than silently accepting a City-only map.
+    let posted = false;
+    await page.route("**/api/health", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        headers: { "access-control-allow-origin": "*" },
+        body: JSON.stringify({ status: "ok", version: "2.1.0" }),
+      })
+    );
+    await page.route("**/api/maps", (route) => {
+      posted = true;
+      return route.abort();
+    });
+    await page.locator("#genCity").fill("Watertown");
+    await page.locator("#generateMap").click();
+    await page.waitForFunction(() =>
+      document.querySelector("#genStatus")?.textContent.includes("older City Map Studio")
+    );
+    assert.equal(posted, false, "Frontend should not post to an old backend");
+    await page.unroute("**/api/health");
+    await page.unroute("**/api/maps");
+
+    // A v2.2 endpoint must receive a Regional request, never City-only.
+    let submittedBody = null;
+    await page.route("**/api/health", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        headers: { "access-control-allow-origin": "*" },
+        body: JSON.stringify({
+          status: "ok",
+          version: "2.2.0",
+          capabilities: { regional_context: true },
+        }),
+      })
+    );
+    await page.route("**/api/maps", (route) => {
+      submittedBody = route.request().postDataJSON();
+      return route.fulfill({
+        status: 422,
+        contentType: "application/json",
+        headers: { "access-control-allow-origin": "*" },
+        body: JSON.stringify({ detail: "fixture request intercepted" }),
+      });
+    });
+    await page.locator("#genScope").selectOption("regional");
+    await page.locator("#generateMap").click();
+    await page.waitForFunction(() =>
+      document.querySelector("#genStatus")?.textContent.includes("fixture request intercepted")
+    );
+    assert.equal(submittedBody.regional_context, true);
+    assert.equal(submittedBody.regional_buffer_km, 3);
+    await page.unroute("**/api/health");
+    await page.unroute("**/api/maps");
+    await page.locator("#genScope").selectOption("city");
+
 
     await page.locator('[data-preset="bold"]').click();
     assert.equal(await page.locator("#roadWidth").inputValue(), "0.28");
