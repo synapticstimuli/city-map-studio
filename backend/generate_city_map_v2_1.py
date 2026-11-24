@@ -23,7 +23,9 @@ from query_planner import plan_polygon_queries, GeographicQueryTooLarge
 from cache_reuse import source_identity, geographic_cache_folder
 
 import geopandas as gpd
+import numpy as np
 import osmnx as ox
+import shapely
 import svgwrite
 from pyproj import Transformer
 from shapely.geometry import (
@@ -211,6 +213,45 @@ def regional_display_frame(boundary_xy, page_width, page_height):
     half_w = page_width * REGIONAL_OUTER_FILL / (2 * scale)
     half_h = page_height * REGIONAL_OUTER_FILL / (2 * scale)
     return scale, box(cx - half_w, cy - half_h, cx + half_w, cy + half_h)
+
+
+def clip_to(geom, area):
+    """Return the same geometry as ``geom.intersection(area)``, faster.
+
+    ``area`` should be prepared with ``shapely.prepare``. Most ways of a large
+    city lie entirely inside or entirely outside the clipping area, and a full
+    overlay against a detailed municipal boundary (thousands of vertices) is
+    the renderer's most expensive per-way step. So:
+
+    * disjoint -> empty (the overlay result would be empty too);
+    * strictly interior -> overlay against a small rectangle enclosing the
+      geometry. GEOS builds the result from the geometry's own edges in both
+      cases, so this reproduces the original output (vertex order, ring
+      orientation, noding of self-crossing ways) at a fraction of the cost;
+    * crossing or touching the edge -> the original overlay.
+
+    ``tests/test_render_fast_paths.py`` and ``benchmark_render.py`` check that
+    SVG output stays byte-identical to clipping every way against ``area``.
+    """
+    if shapely.disjoint(area, geom):
+        return GeometryCollection()
+    if shapely.contains_properly(area, geom):
+        xmin, ymin, xmax, ymax = geom.bounds
+        return geom.intersection(box(xmin - 1, ymin - 1, xmax + 1, ymax + 1))
+    return geom.intersection(area)
+
+
+def project_geometries(geometries, transformer):
+    """Vectorized equivalent of ``shapely.ops.transform`` for many geometries.
+
+    Uses the same pyproj transformer on all coordinates in a single call, so
+    projected coordinates match the previous per-geometry projection exactly.
+    """
+    def reproject(coords):
+        x, y = transformer.transform(coords[:, 0], coords[:, 1])
+        return np.column_stack([x, y])
+
+    return shapely.transform(np.asarray(geometries, dtype=object), reproject)
 
 
 def projected_polygon(geom, types, width_map, fallback):
@@ -418,10 +459,8 @@ def create_svg(args):
     local_crs = boundary_gdf.estimate_utm_crs()
     if local_crs is None:
         raise RuntimeError("Could not estimate a local metric coordinate system")
-    project = Transformer.from_crs(
-        boundary_gdf.crs, local_crs, always_xy=True
-    ).transform
-    boundary_xy = transform(project, boundary)
+    transformer = Transformer.from_crs(boundary_gdf.crs, local_crs, always_xy=True)
+    boundary_xy = transform(transformer.transform, boundary)
     width, height = args.width, args.height
     xmin, ymin, xmax, ymax = boundary_xy.bounds
     if args.regional_context:
@@ -511,9 +550,14 @@ def create_svg(args):
         groups["boundary"].update({"style": "display:none"})
     counts = {key: 0 for key in groups}
 
+    # Prepared clip areas make the per-way disjoint/interior tests cheap.
+    shapely.prepare(boundary_xy)
+    if context_ring_xy is not None:
+        shapely.prepare(context_ring_xy)
+
     def draw_geometry(geom_xy, category, outlines=False):
-        clipped = geom_xy.intersection(
-            context_ring_xy if category == "context" else boundary_xy
+        clipped = clip_to(
+            geom_xy, context_ring_xy if category == "context" else boundary_xy
         )
         iterator = iter_outlines(clipped) if outlines else iter_lines(clipped)
         for piece in iterator:
@@ -532,13 +576,29 @@ def create_svg(args):
             counts[category] += 1
 
     road_shapes, path_shapes = [], []
-    for _, item in features.iterrows():
-        geom = item.geometry
-        if geom is None or geom.is_empty:
+
+    def column(name):
+        # Same result as ``item.get(name)`` on a missing column: None.
+        if name in features.columns:
+            return features[name].tolist()
+        return [None] * len(features)
+
+    # Project every feature in one vectorized call instead of once per row.
+    # Empty or missing geometries are skipped exactly as before.
+    source_geoms = features.geometry.to_numpy()
+    valid = ~(shapely.is_missing(source_geoms) | shapely.is_empty(source_geoms))
+    projected = np.full(len(source_geoms), None, dtype=object)
+    if valid.any():
+        projected[valid] = project_geometries(source_geoms[valid], transformer)
+
+    for geom_xy, highway_raw, railway_raw, disused_raw, abandoned_raw in zip(
+        projected, column("highway"), column("railway"),
+        column("disused"), column("abandoned"),
+    ):
+        if geom_xy is None:
             continue
-        highway = tag_values(item.get("highway"))
-        railway = tag_values(item.get("railway"))
-        geom_xy = transform(project, geom)
+        highway = tag_values(highway_raw)
+        railway = tag_values(railway_raw)
         if args.regional_context and (highway & (STREET_TYPES | PATH_TYPES) or railway & RAIL_TYPES):
             # Muted out-of-city lines are drawn as centerlines even in
             # outline mode, avoiding expensive outer-area buffered unions.
@@ -554,7 +614,7 @@ def create_svg(args):
                 if args.road_mode == "outline":
                     poly = projected_polygon(geom_xy, highway, ROAD_HALF_WIDTH_M, 3.5)
                     if poly is not None:
-                        focused_poly = poly.intersection(boundary_xy)
+                        focused_poly = clip_to(poly, boundary_xy)
                         if not focused_poly.is_empty:
                             road_shapes.append(focused_poly)
                 elif isinstance(geom_xy, (LineString, MultiLineString)):
@@ -565,7 +625,7 @@ def create_svg(args):
             if args.road_mode == "outline":
                 poly = projected_polygon(geom_xy, highway, PATH_HALF_WIDTH_M, 1.0)
                 if poly is not None:
-                    focused_poly = poly.intersection(boundary_xy)
+                    focused_poly = clip_to(poly, boundary_xy)
                     if not focused_poly.is_empty:
                         path_shapes.append(focused_poly)
             elif isinstance(geom_xy, (LineString, MultiLineString)):
@@ -574,7 +634,7 @@ def create_svg(args):
                 draw_geometry(geom_xy, "paths", outlines=True)
 
         if args.show_rail and railway & RAIL_TYPES:
-            if (tag_values(item.get("disused")) | tag_values(item.get("abandoned"))) & {
+            if (tag_values(disused_raw) | tag_values(abandoned_raw)) & {
                 "yes"
             }:
                 continue

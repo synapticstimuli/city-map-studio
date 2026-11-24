@@ -51,6 +51,10 @@ file configured by `OSM_EXTRACT_FILE` when present.
 - Real network-dependent Monaco PBF test is available by manually dispatching
   the GitHub Actions **Backend checks** workflow; not a required push gate.
 - Job logs: `backend/generated_maps/<job-id>.log`
+- Offline renderer benchmark (no network or PBF needed):
+  `python backend/benchmark_render.py --grid 160` reports per-mode timings and
+  SVG SHA-256 so renderer changes can be checked for identical output.
+- Architecture decisions: [DECISIONS.md](DECISIONS.md)
 
 ## Public website / limitations
 
