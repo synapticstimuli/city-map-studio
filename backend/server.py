@@ -113,6 +113,34 @@ def public(job):
     return {k: v for k, v in job.items() if k not in ("path", "_queued_monotonic")}
 
 
+def generation_stage(job_id: str) -> str:
+    """Derive a coarse progress stage from bounded local generator log data."""
+    log_path = OUTPUT_DIR / f"{job_id}.log"
+    try:
+        with log_path.open("rb") as stream:
+            length = stream.seek(0, 2)
+            stream.seek(max(0, length - 16384))
+            snippet = stream.read().decode("utf-8", errors="replace")
+    except OSError:
+        return "Starting generator"
+    signals = (
+        ("Fetching boundary:", "Resolving city boundary"),
+        ("Reusing cached boundary:", "Loading cached boundary"),
+        ("Fetching geographic component", "Downloading geographic data"),
+        ("Geographic download attempt", "Downloading geographic data"),
+        ("Importing local OSM extract", "Reading local regional extract"),
+        ("Using cached geographic data:", "Loading cached street data"),
+        ("STAGE feature_retrieval_seconds", "Preparing geographic cache"),
+        ("Cached geographic data:", "Preparing geographic cache"),
+        ("STAGE geographic_loading_seconds", "Rendering map"),
+        ("Merging ", "Rendering road outlines"),
+        ("STAGE svg_rendering_seconds", "Finalizing SVG export"),
+    )
+    matched = [(snippet.rfind(token), label) for token, label in signals]
+    position, label = max(matched, key=lambda item: item[0])
+    return label if position >= 0 else "Preparing geographic data"
+
+
 def svg_contains_nonempty_group(path: Path, group_id: str) -> bool:
     """Stream-validate a populated SVG layer without loading the entire map."""
     depth = 0
@@ -385,7 +413,9 @@ def map_status(job_id: str):
                 j["status"] == "queued" and j["_queued_monotonic"] < job["_queued_monotonic"]
                 for j in jobs.values()
             ) + 1
-        return result
+    if result["status"] == "running":
+        result["stage"] = generation_stage(job_id)
+    return result
 
 
 @app.get("/api/maps/{job_id}/download")
