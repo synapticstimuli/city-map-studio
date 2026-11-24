@@ -90,9 +90,11 @@ class RegionalRenderTests(unittest.TestCase):
             geometry=[LineString([(-71.01, 42.01), (-70.99, 42.01)])],
             crs="EPSG:4326",
         )
-        with patch.object(ox, "geocode_to_gdf", return_value=test_boundary), \\
-             patch("generate_city_map_v2_1.fetch_features_with_retry",
-                   return_value=fixture_features) as fetch:
+        with (
+            patch.object(ox, "geocode_to_gdf", return_value=test_boundary),
+            patch("generate_city_map_v2_1.fetch_features_with_retry",
+                  return_value=fixture_features) as fetch,
+        ):
             load_geodata(args)
         queried = fetch.call_args.args[0]
         crs = test_boundary.estimate_utm_crs()
