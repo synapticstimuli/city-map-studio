@@ -49,6 +49,23 @@ class APIFlowTests(unittest.TestCase):
         self.assertEqual(submit.call_count, 0)
         self.assertEqual(len(server.jobs), 1)
 
+    def test_progress_stage_reports_latest_bounded_log_marker(self):
+        job_id = "00000000-0000-4000-8000-000000000001"
+        self.assertEqual(server.generation_stage(job_id), "Starting generator")
+        log = self.output / f"{job_id}.log"
+        log.write_text(
+            "Fetching boundary: Somerville, Massachusetts, USA\\n"
+            "Geographic download attempt 1/4\\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(server.generation_stage(job_id), "Downloading geographic data")
+        with log.open("a", encoding="utf-8") as stream:
+            stream.write("STAGE geographic_loading_seconds=16.2\\nMerging 50 road shapes...\\n")
+        self.assertEqual(server.generation_stage(job_id), "Rendering road outlines")
+        with log.open("a", encoding="utf-8") as stream:
+            stream.write("STAGE svg_rendering_seconds=0.12\\n")
+        self.assertEqual(server.generation_stage(job_id), "Finalizing SVG export")
+
     def test_queue_position_and_private_timing_not_exposed(self):
         first, _ = self.submit_without_running(self.req())
         second, _ = self.submit_without_running(self.req(road_mode="centerline"))
