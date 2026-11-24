@@ -12,7 +12,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import geopandas as gpd
 import osmnx as ox
 from shapely.geometry import Polygon, LineString
-from generate_city_map_v2_1 import create_svg
+from shapely.ops import transform
+from pyproj import Transformer
+from generate_city_map_v2_1 import create_svg, load_geodata, regional_display_frame
 
 
 def group_coordinate_bounds(group):
@@ -76,6 +78,33 @@ class RegionalRenderTests(unittest.TestCase):
             crs="EPSG:4326",
         )
         features.to_file(folder / "osm_features.geojson", driver="GeoJSON")
+
+    def test_regional_fetch_limits_overpass_to_visible_print_frame(self):
+        """A first-time regional download must not request invisible halo roads."""
+        args = self.args(True)
+        test_boundary = gpd.GeoDataFrame(
+            geometry=[self.boundary], crs="EPSG:4326"
+        )
+        fixture_features = gpd.GeoDataFrame(
+            {"highway": ["residential"], "railway": [None]},
+            geometry=[LineString([(-71.01, 42.01), (-70.99, 42.01)])],
+            crs="EPSG:4326",
+        )
+        with patch.object(ox, "geocode_to_gdf", return_value=test_boundary), \\
+             patch("generate_city_map_v2_1.fetch_features_with_retry",
+                   return_value=fixture_features) as fetch:
+            load_geodata(args)
+        queried = fetch.call_args.args[0]
+        crs = test_boundary.estimate_utm_crs()
+        project = Transformer.from_crs("EPSG:4326", crs, always_xy=True).transform
+        city_metric = transform(project, self.boundary)
+        queried_metric = transform(project, queried)
+        full_halo = city_metric.buffer(3000)
+        self.assertTrue(full_halo.buffer(0.01).covers(queried_metric))
+        self.assertTrue(queried_metric.buffer(0.01).covers(city_metric))
+        self.assertLess(queried_metric.area, full_halo.area * 0.8)
+        _, display_window = regional_display_frame(city_metric, args.width, args.height)
+        self.assertTrue(display_window.buffer(0.01).covers(queried_metric))
 
     def test_city_only_and_regional_export_layers(self):
         for regional in (False, True):
