@@ -1,4 +1,4 @@
-# City Map Studio v2.1 — Local map creation and SVG editing
+# City Map Studio v2.2 — Local release candidate
 
 Create, style, view, and export editable street maps. The frontend is a static
 website; city generation uses a Python API bound to your local computer.
@@ -25,7 +25,11 @@ If you have an older local server running, stop that first to avoid port conflic
   caching, checksum verification, and duplicate-request coalescing.
 - Editable road, footpath, rail and boundary layers; centered and outline modes.
 - Style presets, paper sizes, portrait/landscape preview, and editable SVG export.
-- Local saved-map library, job queue details, and diagnostic logs.
+- Local saved-map library, queue positions, live generator stage details,
+  and diagnostic logs.
+- City-only and Regional print modes: 78% focus-city fill, with context
+  clipped to a 95% page window on a separate SVG layer. Regional fetching
+  is reduced to the print-visible area when the geographic cache is cold.
 
 ## Optional large-city data
 
