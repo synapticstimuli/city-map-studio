@@ -76,9 +76,9 @@
         <label class="field"
           >Map Library<select id="city">
             <optgroup label="Original collection">
-              <option value="Somerville">Somerville, MA</option>
-              <option value="Cambridge">Cambridge, MA</option>
-              <option value="Boston">Boston, MA</option>
+              <option value="Somerville" data-state="Massachusetts" data-country="USA">Somerville, MA</option>
+              <option value="Cambridge" data-state="Massachusetts" data-country="USA">Cambridge, MA</option>
+              <option value="Boston" data-state="Massachusetts" data-country="USA">Boston, MA</option>
             </optgroup>
 
             <optgroup label="Generated Maps" id="savedMaps"></optgroup></select
@@ -191,7 +191,7 @@
         <header class="toolbar">
           <div>
             <strong id="mapTitle">Somerville</strong
-            ><span>Massachusetts · vector artwork</span>
+            ><span id="mapSubtitle">Massachusetts · vector artwork</span>
           </div>
           <div class="zoom">
             <button id="zoomOut" aria-label="Zoom out">−</button
@@ -210,8 +210,8 @@
         </div>
       </main>
     </div>
-    <script src="config.js?v=local-v22-rc1"></script>
-    <script src="app.js?v=local-v22-rc1"></script>
-    <script src="generator-panel.js?v=local-v22-rc1"></script>
+    <script src="config.js?v=local-v23-dev1"></script>
+    <script src="app.js?v=local-v23-dev1"></script>
+    <script src="generator-panel.js?v=local-v23-dev1"></script>
   </body>
 </html>

@@ -17,8 +17,9 @@ const assert = require("node:assert/strict");
       return svg && svg.querySelectorAll("path").length > 50;
     }, { timeout: 20000 });
     assert.equal(await page.locator("#mapTitle").textContent(), "Somerville");
+    assert.equal(await page.locator("#mapSubtitle").textContent(), "Massachusetts · vector artwork");
     assert.equal(await page.locator("#export").isEnabled(), true);
-    assert.equal(await page.evaluate(() => window.CMS_GENERATOR_BUILD), "local-v22-rc1");
+    assert.equal(await page.evaluate(() => window.CMS_GENERATOR_BUILD), "local-v23-dev1");
     assert.equal(await page.locator("#genScope").inputValue(), "city");
     assert.equal(await page.locator("#regionalLayer").isDisabled(), true);
     await page.locator("#genScope").selectOption("regional");
@@ -113,6 +114,32 @@ const assert = require("node:assert/strict");
     assert.match(await page.locator("#mapMount").getAttribute("style"), /scale\(1\.25\)/);
     await page.locator("#zoomReset").click();
     assert.match(await page.locator("#mapMount").getAttribute("style"), /scale\(1\)/);
+
+    // A generated or library map shows its own state, not Massachusetts.
+    await page.evaluate(() => {
+      const key = registerGeneratedMap(
+        "maps/Boston_Massachusetts_Detailed_Map.svg",
+        { city: "Los Angeles", county: "", state: "California", country: "USA" },
+        "centerline",
+      );
+      document.querySelector("#city").value = key;
+      return loadCity();
+    });
+    assert.equal(await page.locator("#mapTitle").textContent(), "Los Angeles");
+    assert.equal(await page.locator("#mapSubtitle").textContent(), "California · vector artwork");
+    await page.evaluate(() => {
+      const key = registerGeneratedMap(
+        "maps/Boston_Massachusetts_Detailed_Map.svg",
+        { city: "Paris", county: "", state: "", country: "France" },
+        "centerline",
+      );
+      document.querySelector("#city").value = key;
+      return loadCity();
+    });
+    assert.equal(await page.locator("#mapSubtitle").textContent(), "France · vector artwork");
+    await page.locator("#city").selectOption("Cambridge");
+    await page.waitForFunction(() => document.querySelector("#mapTitle").textContent === "Cambridge");
+    assert.equal(await page.locator("#mapSubtitle").textContent(), "Massachusetts · vector artwork");
 
     if (errors.length) throw new Error("Browser JavaScript errors: " + errors.join(" | "));
     console.log("PASS: city loading, map styling, layer visibility, export, paper orientation, zoom");

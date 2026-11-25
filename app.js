@@ -51,12 +51,20 @@ function reset() {
   dx = dy = 0;
   view();
 }
+// Subtitle under the map title: the selected map's own state (or country),
+// never a fixed label. Bundled maps carry data-state in index.html;
+// generated and library maps get it in registerGeneratedMap().
+function mapSubtitle(option) {
+  const region = (option.dataset.state || "").trim() || (option.dataset.country || "").trim();
+  return region ? `${region} · vector artwork` : "Vector artwork";
+}
 async function loadCity() {
   let token = ++request;
   const selected = $("city").selectedOptions[0];
   const city = selected.dataset.city || selected.value;
   const mapUrl = files[selected.value];
   $("mapTitle").textContent = city;
+  $("mapSubtitle").textContent = mapSubtitle(selected);
   $("export").disabled = true;
   $("mapMount").innerHTML = '<div class="loading">Loading ' + city + "…</div>";
   svg = null;
