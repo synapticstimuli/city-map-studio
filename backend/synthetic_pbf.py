@@ -31,7 +31,9 @@ def target_city_bounds() -> tuple[float, float, float, float]:
 
 
 def write_synthetic_pbf(path: Path, grid: int = 400, buildings: int = 300_000,
-                        seed: int = 7) -> dict:
+                        seed: int = 7, header_box=None) -> dict:
+    """``header_box`` (west, south, east, north) is the coverage the file
+    declares in its header, as Geofabrik extracts do; default: the region."""
     import osmium
 
     path = Path(path)
@@ -44,7 +46,12 @@ def write_synthetic_pbf(path: Path, grid: int = 400, buildings: int = 300_000,
     way_id = 0
     counts = {"nodes": 0, "ways": 0, "highway_ways": 0, "rail_ways": 0}
 
-    writer = osmium.SimpleWriter(str(path))
+    header = osmium.io.Header()
+    west, south, east, north = header_box or (
+        REGION_WEST, REGION_SOUTH, REGION_WEST + REGION_SIZE, REGION_SOUTH + REGION_SIZE)
+    header.add_box(osmium.osm.Box(osmium.osm.Location(west, south),
+                                  osmium.osm.Location(east, north)))
+    writer = osmium.SimpleWriter(str(path), header=header)
     try:
         # Grid intersections plus one mid-block node per block, so each block
         # way has three nodes. Node ids are laid out so ways can refer to them.

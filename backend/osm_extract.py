@@ -63,6 +63,23 @@ def _check_inputs(extract_path, boundary) -> Path:
     return extract_path
 
 
+def extract_bounds(extract_path) -> tuple[float, float, float, float] | None:
+    """The area an extract declares it covers (west, south, east, north).
+
+    Geofabrik and most published extracts store this in the PBF header. Returns
+    None when the file declares no area, so callers can treat it as unknown.
+    """
+    osmium = _require_osmium()
+    reader = osmium.io.Reader(str(extract_path), osmium.osm.osm_entity_bits.NOTHING)
+    try:
+        box = reader.header().box()
+    finally:
+        reader.close()
+    if not box.valid():
+        return None
+    return (box.bottom_left.lon, box.bottom_left.lat, box.top_right.lon, box.top_right.lat)
+
+
 def scan_extract(extract_path: Path, highway_types: set[str], railway_types: set[str],
                  chunk_ways: int = CHUNK_WAYS):
     """Yield every matching way of the extract, in file order, in chunks.

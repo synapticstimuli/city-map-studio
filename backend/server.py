@@ -22,7 +22,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
-from cache_reuse import CACHE_SCHEMA, RENDER_VERSION, request_identity, reusable_map, svg_sha256, source_identity
+from cache_reuse import CACHE_SCHEMA, RENDER_VERSION, request_identity, reusable_map, svg_sha256, extract_set_identity
 
 
 # ==========================================
@@ -203,7 +203,7 @@ def run_job(job_id: str, req: MapRequest):
     if OSM_EXTRACT_FILE:
         command.extend(["--extract-file", OSM_EXTRACT_FILE])
     try:
-        if source_identity(OSM_EXTRACT_FILE) != expected_source_key:
+        if extract_set_identity(OSM_EXTRACT_FILE) != expected_source_key:
             raise RuntimeError("OSM extract changed while job was queued. Submit a fresh request.")
         # Persist subprocess diagnostics per job. On failure show a bounded,
         # actionable excerpt instead of hiding the generator's exception.
@@ -229,7 +229,14 @@ def run_job(job_id: str, req: MapRequest):
                     "California OSM extract (OSM_EXTRACT_FILE). "
                     + (lines[-1][:350] if lines else "")
                 )
-            if any(word in excerpt.lower() for word in ("no boundary found", "geocode", "nominatim")):
+            coverage = next((line for line in reversed(lines) if "ExtractDoesNotCover" in line), None)
+            if coverage:
+                # The generator's own message says which extract to download.
+                raise RuntimeError(coverage.split("ExtractDoesNotCover:", 1)[-1].strip()[:600])
+            # Judge only the final error, not the whole log: every log mentions
+            # Nominatim because the boundary lookup is logged.
+            final = lines[-1].lower() if lines else ""
+            if any(word in final for word in ("no boundary found", "geocode", "nominatim")):
                 raise RuntimeError(
                     "Could not resolve the municipal boundary. Verify city, state, "
                     "country and county (Los Angeles city is in Los Angeles County). "
@@ -248,7 +255,7 @@ def run_job(job_id: str, req: MapRequest):
                 "The generator did not produce the required populated regional-context "
                 "SVG layer. The result was discarded; check the job log and backend version."
             )
-        if source_identity(OSM_EXTRACT_FILE) != expected_source_key:
+        if extract_set_identity(OSM_EXTRACT_FILE) != expected_source_key:
             raise RuntimeError("OSM extract changed during generation; result discarded.")
         geography_key, render_key = request_identity(req, GENERATOR_SHA256, expected_source_key)
         metadata = {
@@ -341,7 +348,7 @@ def create_map(req: MapRequest, request: Request):
         raise HTTPException(403, "Map generation is available only on localhost.")
 
     try:
-        source_key = source_identity(OSM_EXTRACT_FILE)
+        source_key = extract_set_identity(OSM_EXTRACT_FILE)
     except (OSError, ValueError) as exc:
         raise HTTPException(422, f"Configured regional extract unavailable: {exc}") from exc
     geography_key, render_key = request_identity(req, GENERATOR_SHA256, source_key)

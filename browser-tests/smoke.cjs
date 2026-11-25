@@ -19,7 +19,7 @@ const assert = require("node:assert/strict");
     assert.equal(await page.locator("#mapTitle").textContent(), "Somerville");
     assert.equal(await page.locator("#mapSubtitle").textContent(), "Massachusetts · vector artwork");
     assert.equal(await page.locator("#export").isEnabled(), true);
-    assert.equal(await page.evaluate(() => window.CMS_GENERATOR_BUILD), "local-v23-dev1");
+    assert.equal(await page.evaluate(() => window.CMS_GENERATOR_BUILD), "local-v23-dev2");
     assert.equal(await page.locator("#genScope").inputValue(), "city");
     assert.equal(await page.locator("#regionalLayer").isDisabled(), true);
     await page.locator("#genScope").selectOption("regional");
@@ -105,6 +105,12 @@ const assert = require("node:assert/strict");
     assert.match(exported, /<svg\b/);
     assert.match(exported, /city-boundary/);
     assert.match(exported, /457\.2mm/);
+    // The artwork sits inside a 1 cm border on every side (ADR-006).
+    const [, ox, oy, fit] = exported.match(/translate\(([\d.]+) ([\d.]+)\) scale\(([\d.]+)\)/).map(Number);
+    const [, vw, vh] = (await page.evaluate(() => { const v = svg.viewBox.baseVal; return [0, v.width, v.height]; }));
+    assert.ok(ox >= 10 - 1e-6 && oy >= 10 - 1e-6, `offset ${ox},${oy}`);
+    assert.ok(Math.min(ox, oy) < 10 + 1e-6, "artwork touches the border on its limiting side");
+    assert.ok(ox * 2 + vw * fit <= 457.2 + 1e-6 && oy * 2 + vh * fit <= 609.6 + 1e-6);
 
     await page.locator("#city").selectOption("Cambridge");
     await page.waitForFunction(() => document.querySelector("#mapTitle").textContent === "Cambridge"
@@ -126,6 +132,25 @@ const assert = require("node:assert/strict");
     // comes back when zoomed past the bitmap's sharp range.
     await page.evaluate(() => { SNAPSHOT_MIN_PATHS = 0; reset(); scheduleSnapshot(); });
     await page.waitForFunction(() => document.querySelector("#mapMount .map-snapshot"), null, { timeout: 20000 });
+    // The live map and the bitmap fill the same box (the whole page), so
+    // the map does not jump when one replaces the other.
+    const boxes = await page.evaluate(() => {
+      const r = (el) => { const b = el.getBoundingClientRect(); return [b.width / scale, b.height / scale].map(Math.round); };
+      const mount = document.querySelector("#mapMount");
+      showSnapshot(false);
+      const live = r(mount.querySelector("svg"));
+      showSnapshot(true);
+      const bitmap = r(mount.querySelector(".map-snapshot"));
+      const pad = parseFloat(getComputedStyle(mount).paddingLeft);
+      const mm = mount.clientWidth / getPaperDimensions().width;
+      return { live, bitmap, padMm: pad / mm,
+               inner: [mount.clientWidth - 2 * pad, mount.clientHeight - 2 * pad].map(Math.round) };
+    });
+    // 1 cm page border (ADR-006), and both fill the area inside it.
+    assert.ok(Math.abs(boxes.padMm - 10) < 0.2, `border ${boxes.padMm} mm`);
+    for (const shown of [boxes.live, boxes.bitmap])
+      assert.ok(shown.every((v, i) => Math.abs(v - boxes.inner[i]) <= 1), `${shown} vs ${boxes.inner}`);
+    assert.deepEqual(boxes.live, boxes.bitmap);
     await page.locator("#zoomIn").click();
     assert.equal(await page.locator("#mapMount .map-snapshot").isVisible(), true);
     assert.equal(await page.locator("#mapMount svg").isVisible(), false);

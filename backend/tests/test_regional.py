@@ -171,5 +171,15 @@ class RegionalRenderTests(unittest.TestCase):
         self.assertAlmostEqual(max((x1 - x0) / (420 - 36), (y1 - y0) / (297 - 36)), 1.0, places=3)
 
 
+
+class PageBorderTests(unittest.TestCase):
+    def test_default_page_is_a3_inside_a_1cm_border(self):
+        """ADR-006: the app adds a 10 mm border; the artwork fills the rest."""
+        import generate_city_map_v2_1 as generator
+        self.assertEqual(generator.PAGE_BORDER_MM, 10)
+        self.assertEqual((generator.PAGE_WIDTH_MM, generator.PAGE_HEIGHT_MM), (400, 277))
+        app = (Path(__file__).resolve().parents[2] / "app.js").read_text(encoding="utf-8")
+        self.assertIn("const PAGE_BORDER_MM = 10;", app)
+
 if __name__ == "__main__":
     unittest.main()

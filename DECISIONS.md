@@ -3,6 +3,80 @@
 Short records of significant technical decisions. Newest first. Each entry
 says what was decided, why, and how it is verified.
 
+## ADR-007: Pick the local OSM extract that covers the city (v2.3)
+
+**Status:** accepted 2026-11-25, after San Francisco failed on Rod's PC.
+
+### Context
+Rod's only extract is `socal-latest.osm.pbf` (longitude -121.44 to -113.86,
+latitude 32.34 to 35.81). San Francisco is at about -122.41, 37.79, so the
+import found no streets and the app showed "Regional extract contains no
+matching mapped ways inside this boundary". When an extract is configured,
+Overpass was never used. Separately, the server called any failure whose log
+mentioned "Nominatim" a boundary problem, and every log mentions it.
+
+### Decision
+- Before importing, the generator reads the area each extract declares in its
+  PBF header (Geofabrik extracts all declare one).
+- Candidates: `OSM_EXTRACT_FILE` first, then every other `*.osm.pbf` in the
+  same folder. The first one that covers the city's bounding box is used, so
+  dropping `norcal-latest.osm.pbf` next to `socal-latest.osm.pbf` is enough.
+  Each extract keeps its own geographic cache and road index.
+- If none covers it, the generator tries Overpass. If the area is too large
+  for Overpass, it fails with a message naming the extracts, what they cover,
+  and where to download one that covers the city. The server shows that
+  message as is.
+- An extract that declares no area is trusted, as before. One that covers only
+  part of the city is used with a warning.
+- No automatic download: extracts are hundreds of MB, and downloading them is
+  left to the user.
+- The finished-map cache key includes every candidate extract
+  (`extract_set_identity`). With a single extract the key is unchanged.
+- The server now judges a "boundary not found" failure from the final error
+  line only.
+
+### Verification
+`backend/tests/test_extract_choice.py` covers: reading the header area, the
+candidate order and cache key, keeping a configured extract that covers,
+switching to a sibling extract end to end, falling back to Overpass, the
+download message, and extracts with no declared area.
+
+## ADR-006: 1 cm white page border (v2.3, amends ADR-004)
+
+**Status:** accepted 2026-11-25 (Rod: "let's leave a 1 cm border").
+
+### Context
+ADR-004 made Regional surroundings fill the whole page. Rod wants a 1 cm
+white border on every side instead. He also saw the map appear with a wide
+border and then jump to fill the page a few seconds later. The cause was an
+old style rule that drew the live map at 90% of the preview, while the
+bitmap zoom preview (ADR-004) filled 100%.
+
+### Decision
+- The app adds the border (`PAGE_BORDER_MM = 10` in app.js). The preview page
+  gets a 10 mm padding at preview scale, and the export fits the artwork
+  inside the paper minus 10 mm on each side. This makes it exactly 1 cm on
+  every paper size.
+- The live map and the zoom bitmap both fill the area inside the border, so
+  nothing moves when one replaces the other.
+- The generator's default page is now the A3 landscape area inside the border
+  (400 x 277 mm, was 420 x 297). On A3 the surroundings stop exactly 1 cm from
+  every edge. The city still fills 95% of that drawing area. On other papers,
+  the 1 cm border is the minimum, and the different page shape adds white
+  space on two sides. That is the existing limit until the paper size is
+  passed to the generator (backlog).
+- Regional caches are per page shape, so the first Regional run for each city
+  re-reads its road index once (no PBF rescan). `RENDER_VERSION` is now
+  `city-map-studio-svg-v2.3-border10`.
+- Older saved maps (420 x 297) also get the border; they show slightly
+  smaller.
+
+### Verification
+Browser smoke test: the border is 10 mm at preview scale. The live map and
+the bitmap have the same size, equal to the area inside the border; this
+fails with the old 90% rule. The exported artwork sits at least 10 mm from
+each edge and touches the border on its limiting side.
+
 ## ADR-005: FlatGeobuf geographic feature cache (v2.3)
 
 **Status:** accepted 2026-11-25 (Rod chose this option; surroundings unchanged).

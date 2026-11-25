@@ -113,9 +113,11 @@ async function buildSnapshot() {
   }
   const mount = $("mapMount");
   const ratio = window.devicePixelRatio || 1;
-  const box = mount.getBoundingClientRect();
-  const cssWidth = box.width / scale;
-  const cssHeight = box.height / scale;
+  // Size of the area inside the page border (unaffected by the zoom
+  // transform), which both the live SVG and this bitmap fill.
+  const pad = getComputedStyle(mount);
+  const cssWidth = mount.clientWidth - parseFloat(pad.paddingLeft) - parseFloat(pad.paddingRight);
+  const cssHeight = mount.clientHeight - parseFloat(pad.paddingTop) - parseFloat(pad.paddingBottom);
   if (!cssWidth || !cssHeight) return;
   const supersample = Math.max(
     1,
@@ -322,14 +324,15 @@ $("export").onclick = () => {
   const sourceWidth = sourceViewBox.width;
   const sourceHeight = sourceViewBox.height;
 
-  // Uniform fit, preserving aspect ratio. Generated maps already place the
-  // city at 95% of their page and Regional surroundings to its edges
-  // (ADR-004), so the artwork is not shrunk further here.
-  const marginFactor = 1.0;
+  // Uniform fit, preserving aspect ratio, inside the 1 cm white page border
+  // (ADR-006). The preview uses the same border, so what you see is what
+  // is exported.
+  const innerWidth = width - 2 * PAGE_BORDER_MM;
+  const innerHeight = height - 2 * PAGE_BORDER_MM;
 
   const fitScale = Math.min(
-    (width * marginFactor) / sourceWidth,
-    (height * marginFactor) / sourceHeight,
+    innerWidth / sourceWidth,
+    innerHeight / sourceHeight,
   );
 
   const fittedWidth = sourceWidth * fitScale;
@@ -448,6 +451,10 @@ $("resetStyle").addEventListener("click", () => {
    PRINT SETTINGS
    ========================================== */
 
+// White border left on every side of the printed page, in millimeters
+// (ADR-006). Generated maps fill the area inside it.
+const PAGE_BORDER_MM = 10;
+
 // Paper dimensions in millimeters
 const paperSizes = {
   A3: [297, 420],
@@ -505,6 +512,9 @@ function updatePrintPreview() {
   mount.style.width = `${previewWidth}px`;
   mount.style.height = `${previewHeight}px`;
   mount.style.aspectRatio = `${width} / ${height}`;
+  // The 1 cm page border, at preview scale. The map (live SVG and zoom
+  // bitmap alike) fills the area inside it, exactly as in the export.
+  mount.style.padding = `${PAGE_BORDER_MM * previewScale}px`;
 
   // Recenter and fit the preview.
   reset();

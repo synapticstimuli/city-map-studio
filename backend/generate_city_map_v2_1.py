@@ -21,7 +21,7 @@ import pandas as pd
 
 from osmnx._errors import ResponseStatusCodeError, InsufficientResponseError
 from query_planner import plan_polygon_queries, GeographicQueryTooLarge
-from cache_reuse import source_identity, geographic_cache_folder
+from cache_reuse import extract_candidates, geographic_cache_folder, source_identity
 
 import geopandas as gpd
 import numpy as np
@@ -56,11 +56,16 @@ INCLUDE_SERVICE = True
 INCLUDE_TRACKS = True
 INCLUDE_UNDERGROUND_RAIL = False
 OVERPASS_TIMEOUT_SECONDS = 300
-PAGE_WIDTH_MM = 420
-PAGE_HEIGHT_MM = 297
-# v2.3 print composition (ADR-004, approved by Rod 2026-11-25): the city's
-# bounding box fills 95% of the page in its limiting dimension, centered, in
-# both modes. Regional surroundings fill the whole page. (v2.2: 78% / 95%.)
+# The generated artwork is the A3 landscape drawing area inside the 1 cm white
+# page border (ADR-006). The app adds the border itself, exactly 10 mm on
+# whichever paper is chosen, in the preview and in the export.
+PAGE_BORDER_MM = 10
+PAGE_WIDTH_MM = 420 - 2 * PAGE_BORDER_MM
+PAGE_HEIGHT_MM = 297 - 2 * PAGE_BORDER_MM
+# v2.3 print composition (ADR-004/ADR-006, approved by Rod 2026-11-25): the
+# city's bounding box fills 95% of the drawing area in its limiting dimension,
+# centered, in both modes. Regional surroundings fill the whole drawing area,
+# up to the 1 cm page border. (v2.2: 78% / 95%.)
 CITY_FILL = 0.95
 REGIONAL_FOCUS_FILL = CITY_FILL
 REGIONAL_OUTER_FILL = 1.00
@@ -392,6 +397,77 @@ def read_cached_features(folder):
     return None
 
 
+class ExtractDoesNotCover(RuntimeError):
+    """No local OSM extract covers the place, and Overpass cannot be used."""
+
+
+def city_boundary_for_extract_choice(args, key):
+    """The city boundary (WGS84), from any cached copy or Nominatim."""
+    place_dir = Path(args.cache_dir) / key
+    cached = sorted(place_dir.rglob("boundary.geojson")) if place_dir.is_dir() else []
+    if cached and not args.refresh_data:
+        boundary_gdf = gpd.read_file(cached[0])
+    else:
+        boundary_gdf = ox.geocode_to_gdf(location_query(args))
+    if boundary_gdf.empty:
+        raise RuntimeError(f"No boundary found: {location_query(args)}")
+    return boundary_gdf.to_crs("EPSG:4326").geometry.union_all()
+
+
+def covered_fraction(bounds, geometry):
+    """Share of the geometry's bounding box inside an extract's declared area."""
+    if bounds is None:
+        return None
+    gx0, gy0, gx1, gy1 = geometry.bounds
+    area = max((gx1 - gx0) * (gy1 - gy0), 1e-18)
+    inside = box(gx0, gy0, gx1, gy1).intersection(box(*bounds)).area
+    return inside / area
+
+
+def choose_extract(args, key):
+    """Pick the local OSM extract that covers this city (ADR-007).
+
+    Candidates are the configured extract, then other ``*.osm.pbf`` files in
+    its folder. Returns ``(extract, message)``: ``extract`` is None when no
+    candidate covers the city, and ``message`` then explains what to download.
+    An extract that declares no coverage area is trusted, as before.
+    """
+    from osm_extract import extract_bounds
+
+    candidates = extract_candidates(args.extract_file)
+    configured = candidates[0]
+    bounds = {path: extract_bounds(path) for path in candidates}
+    if bounds[configured] is None:
+        return configured, None
+    city = city_boundary_for_extract_choice(args, key)
+    shares = {path: covered_fraction(bounds[path], city) for path in candidates}
+    for path in candidates:
+        if shares[path] is None or shares[path] >= 0.999:
+            if path != configured:
+                print(f"Using OSM extract {path.name}: it covers {args.city}; "
+                      f"{configured.name} does not", flush=True)
+            return path, None
+    best = max(candidates, key=lambda p: shares[p] or 0)
+    if shares[best]:
+        print(f"Warning: {best.name} covers only {shares[best]:.0%} of {args.city}'s "
+              "bounding box; streets outside it will be missing", flush=True)
+        return best, None
+    described = "; ".join(
+        f"{p.name} covers longitude {b[0]:.2f} to {b[2]:.2f}, latitude {b[1]:.2f} to {b[3]:.2f}"
+        for p, b in bounds.items() if b is not None
+    )
+    x0, y0, x1, y1 = city.bounds
+    message = (
+        f"{args.city} (longitude {(x0 + x1) / 2:.2f}, latitude {(y0 + y1) / 2:.2f}) is outside "
+        f"the OSM map data on this computer ({described}). Download an extract that covers it "
+        f"(for example the {args.state or args.country} extract, or a smaller sub-region of it, "
+        f"from download.geofabrik.de) into {configured.parent}. The app will pick it up "
+        "automatically on the next run."
+    )
+    print(f"{message} Trying OpenStreetMap Overpass instead.", flush=True)
+    return None, message
+
+
 def regional_cache_name(width, height):
     """Geographic cache subfolder for full-page Regional maps (ADR-004)."""
     return f"regional_fullpage_{width:g}x{height:g}mm"
@@ -411,9 +487,13 @@ def load_geodata(args):
     key = "_".join(
         slug(part) for part in (args.city, args.county, args.state, args.country)
     )
+    # Use the local extract that covers this city, if any (ADR-007).
+    extract_file, coverage_message = (
+        choose_extract(args, key) if args.extract_file is not None else (None, None)
+    )
     # Never mix Overpass and regional-extract geographic features.
     # Changing the extract path/size/mtime selects a fresh cache namespace.
-    source_key = source_identity(args.extract_file)
+    source_key = source_identity(extract_file)
     folder = geographic_cache_folder(args.cache_dir, key, source_key)
     if args.regional_context:
         # Full-page regional geography (ADR-004) depends on the page shape,
@@ -474,11 +554,11 @@ def load_geodata(args):
             flush=True,
         )
 
-    if args.extract_file is not None:
+    if extract_file is not None:
         # Explicit opt-in; no Overpass queries when a local extract is selected.
         from osm_extract import extract_features
         features = extract_features(
-            args.extract_file, query_geometry, STREET_TYPES | PATH_TYPES, RAIL_TYPES,
+            extract_file, query_geometry, STREET_TYPES | PATH_TYPES, RAIL_TYPES,
             index_dir=road_index_dir(args.cache_dir),
         )
     else:
@@ -491,7 +571,15 @@ def load_geodata(args):
             "highway": sorted(STREET_TYPES | PATH_TYPES),
             "railway": sorted(RAIL_TYPES),
         }
-        plan = plan_polygon_queries(query_geometry)
+        try:
+            plan = plan_polygon_queries(query_geometry)
+        except GeographicQueryTooLarge as exc:
+            if coverage_message:
+                raise ExtractDoesNotCover(
+                    f"{coverage_message} (OpenStreetMap Overpass cannot fetch an area this "
+                    "large, so a local extract is needed.)"
+                ) from exc
+            raise
         print(
             f"Query plan: {len(plan.polygons)} separate areas; "
             f"~{plan.projected_hull_km2:.1f} km2 total coverage",

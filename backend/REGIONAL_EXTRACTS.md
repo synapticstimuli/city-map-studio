@@ -118,3 +118,13 @@ Do not treat synthetic-fixture performance as regional-scale performance.
 The automated tests also convert a synthetic OSM XML fixture into an actual
 binary OSM PBF and read it back, covering format support independently of
 a real regional download.
+
+## Several extracts (ADR-007)
+
+Put extracts for several regions in one folder, for example
+`D:\MapData\socal-latest.osm.pbf` and `D:\MapData\norcal-latest.osm.pbf`,
+and point `OSM_EXTRACT_FILE` at any one of them. For each city, the generator
+uses the configured extract if it covers the city. Otherwise it uses another
+`*.osm.pbf` in the same folder that does. If none covers the city, it tries
+Overpass, and if that area is too large, it says which extract to download.
+

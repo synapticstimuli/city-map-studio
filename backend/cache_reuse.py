@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 
 CACHE_SCHEMA = 1
-RENDER_VERSION = "city-map-studio-svg-v2.3-fullpage"
+RENDER_VERSION = "city-map-studio-svg-v2.3-border10"
 PLACE_FIELDS = ("city", "county", "state", "country")
 OPTIONS = ("style", "road_mode", "include_paths", "show_boundary", "regional_context", "regional_buffer_km")
 
@@ -33,6 +33,35 @@ def source_identity(extract_file: str | Path | None = None) -> str:
         "bytes": stat.st_size,
         "mtime_ns": stat.st_mtime_ns,
     })[:24]
+
+
+def extract_candidates(extract_file: str | Path | None) -> list[Path]:
+    """The configured extract first, then any other ``*.osm.pbf`` beside it.
+
+    Dropping another region's extract (for example Northern California next
+    to Southern California) into the same folder makes it available without
+    changing OSM_EXTRACT_FILE (ADR-007).
+    """
+    if not extract_file:
+        return []
+    configured = Path(extract_file).expanduser().resolve(strict=True)
+    siblings = sorted(
+        p.resolve() for p in configured.parent.glob("*.osm.pbf")
+        if p.is_file() and p.resolve() != configured
+    )
+    return [configured] + siblings
+
+
+def extract_set_identity(extract_file: str | Path | None = None) -> str:
+    """Provenance key for every extract the generator may choose from.
+
+    With a single extract this equals ``source_identity`` (unchanged keys);
+    adding, replacing or removing a sibling extract gives a new key.
+    """
+    candidates = extract_candidates(extract_file)
+    if len(candidates) <= 1:
+        return source_identity(extract_file)
+    return "extracts-" + digest([source_identity(p) for p in candidates])[:24]
 
 
 def geographic_cache_folder(root: Path, place_key: str, source_key: str) -> Path:
