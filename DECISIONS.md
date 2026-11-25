@@ -145,6 +145,9 @@ runs read existing cached geography, so there is no PBF import.
 | Generator total | 340.1 s | 152.1 / 148.9 s | 43.5 / 42.7 s | 265.7 s |
 
 - Rendering is about 4x faster; the cached total is about 3.5x faster.
+- Rod's own run in the app (job 5a2ab87a, cached geography): cache read 7.1 s,
+  rendering 33.8 s, generator total 40.9 s; about 45 s as Rod timed it. Its SVG
+  has the same SHA-256 as below.
 - All five benchmark SVGs and the original job SVG share SHA-256
   `8ab52b0fdf118cd884cb70616f20ab65c90e3732f20a6bbdfdd479e31ec22765`.
 - This change does not touch the import code. The slower import in the single
