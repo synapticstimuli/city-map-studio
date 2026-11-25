@@ -3,6 +3,46 @@
 Short records of significant technical decisions. Newest first. Each entry
 says what was decided, why, and how it is verified.
 
+## ADR-003: Batch clipping and no svgwrite validation in the renderer (v2.3)
+
+**Date:** 2026-11-25 · **Status:** accepted · **Branch:** `claude/project-thread-l341wt`
+
+### Context
+Rod's LA Regional centerline run (job baf30773, 2026-11-25) took 9:43 in the
+generator: 179 s PBF import and 386 s rendering, for 412,523 ways. That run
+used the v2.2 code (`77b4979`), not ADR-001/002. Profiling the same cached
+data on Rod's PC: v2.2 renders in 353.9 s, ADR-001 (`1b5d070`) in 74.5 s,
+byte-identical SVG. With ADR-001, the largest remaining costs were Python-level
+work in `clip_to` (one shapely call per predicate plus a new rectangle per
+way, about 40% of profiled time; 824,871 calls) and svgwrite's per-attribute
+validation (about 15%). Of the 412,523 ways only 4,314 cross the LA
+boundary; all others are entirely inside or outside it.
+
+### Decision
+1. `clip_many(geometries, area)`: the ADR-001 rules applied to whole arrays
+   (one `disjoint`, one `contains_properly`, one batched overlay against
+   per-way rectangles, one batched overlay for crossing ways). `create_svg`
+   clips every projected way against the city and the Regional context ring
+   up front and the per-way loop only looks results up. Derived geometries
+   (polygon boundaries, outline buffers, unions) still go through `clip_to`.
+2. `svgwrite.Drawing(..., debug=False)`: skips attribute validation only;
+   the serialized SVG is unchanged.
+3. A shared empty geometry replaces building a new `GeometryCollection()` for
+   each disjoint way.
+
+### Compatibility
+SVGs byte-identical to v2.2 in all four modes: `test_render_fast_paths.py`
+now renders each mode against a reference that does a full overlay per way
+and keeps svgwrite validation on; `benchmark_render.py --grid 160` hashes
+match the v2.2 hashes. No API, CLI, cache or SVG-structure changes.
+
+### Evidence (synthetic, Linux, 4 vCPU)
+`benchmark_render.py --grid 160`: City-only centerline 2.3 s -> 1.5 s,
+Regional centerline 3.7 s -> 1.8 s (v2.2: 13.7 s and 18.4 s). An LA-like
+synthetic city (20,000-vertex boundary with 12 enclaves), Regional
+centerline: 10.5 s -> 5.4 s. Outline mode is dominated by the buffered-road
+union and is unchanged. Real LA Regional timing on Rod's PC: pending.
+
 ## ADR-002: Reusable road index for regional OSM extracts (v2.3)
 
 **Date:** 2026-11-25 · **Status:** accepted · **Branch:** `claude/project-thread-l341wt`

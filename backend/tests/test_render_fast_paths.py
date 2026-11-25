@@ -9,7 +9,7 @@ import math
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -119,6 +119,26 @@ class ProjectionTests(unittest.TestCase):
             assert_same_geometry(self, transform(transformer.transform, original), fast)
 
 
+_Drawing = generator.svgwrite.Drawing
+
+
+def validating_drawing(*args, **kwargs):
+    kwargs["debug"] = True
+    return _Drawing(*args, **kwargs)
+
+
+class ClipManyTests(unittest.TestCase):
+    def test_matches_clip_to_element_by_element(self):
+        area = wiggly_area()
+        ring = box(-2500, -2500, 2500, 2500).difference(area)
+        cases = list(ClipToTests().cases().values())
+        for clip_area in (area, ring):
+            shapely.prepare(clip_area)
+            batch = generator.clip_many(cases, clip_area)
+            for geom, fast in zip(cases, batch):
+                assert_same_geometry(self, geom.intersection(clip_area), fast)
+
+
 class ByteIdenticalSvgTests(unittest.TestCase):
     def test_all_modes_match_clipping_every_way(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -131,13 +151,22 @@ class ByteIdenticalSvgTests(unittest.TestCase):
                 for road_mode in ("centerline", "outline"):
                     with self.subTest(regional=regional, road_mode=road_mode):
                         outputs = []
-                        for label, clip in (
-                            ("fast", generator.clip_to),
-                            ("reference", lambda geom, area: geom.intersection(area)),
-                        ):
+                        for label in ("fast", "reference"):
                             out = root / f"{label}-{regional}-{road_mode}.svg"
-                            with patch.object(generator, "clip_to", clip), \
-                                    redirect_stdout(StringIO()):
+                            with ExitStack() as stack:
+                                stack.enter_context(redirect_stdout(StringIO()))
+                                if label == "reference":
+                                    # v2.2 behaviour: a full overlay per way and
+                                    # svgwrite attribute validation switched on.
+                                    stack.enter_context(patch.object(
+                                        generator, "clip_to",
+                                        lambda geom, area: geom.intersection(area)))
+                                    stack.enter_context(patch.object(
+                                        generator, "clip_many",
+                                        lambda geoms, area: np.array(
+                                            [g.intersection(area) for g in geoms], dtype=object)))
+                                    stack.enter_context(patch.object(
+                                        generator.svgwrite, "Drawing", validating_drawing))
                                 generator.create_svg(render_args(cache, out, regional, road_mode))
                             outputs.append(out.read_bytes())
                         self.assertGreater(len(outputs[0]), 10_000)
