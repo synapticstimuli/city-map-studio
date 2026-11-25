@@ -14,7 +14,7 @@ import osmnx as ox
 from shapely.geometry import Polygon, LineString
 from shapely.ops import transform
 from pyproj import Transformer
-from generate_city_map_v2_1 import create_svg, load_geodata, regional_display_frame
+from generate_city_map_v2_1 import create_svg, load_geodata, regional_cache_name, regional_display_frame
 
 
 def group_coordinate_bounds(group):
@@ -54,7 +54,7 @@ class RegionalRenderTests(unittest.TestCase):
             show_boundary=False, regional_context=regional,
             regional_buffer_km=3.0, show_rail=True, include_service=True,
             include_tracks=True, include_underground_rail=False,
-            width=420, height=297, margin=18, road_stroke=None,
+            width=420, height=297, margin=None, road_stroke=None,
             boundary_stroke=None, refresh_data=False, overpass_timeout=300,
             cache_dir=self.root / "cache", extract_file=None,
             output=self.root / ("regional.svg" if regional else "city.svg"),
@@ -62,7 +62,7 @@ class RegionalRenderTests(unittest.TestCase):
 
     def seed(self, args):
         place_dir = args.cache_dir / self.place
-        folder = (place_dir / "regional_3000m") if args.regional_context else place_dir
+        folder = (place_dir / regional_cache_name(args.width, args.height)) if args.regional_context else place_dir
         folder.mkdir(parents=True, exist_ok=True)
         gpd.GeoDataFrame(
             geometry=[self.boundary], crs="EPSG:4326"
@@ -79,8 +79,8 @@ class RegionalRenderTests(unittest.TestCase):
         )
         features.to_file(folder / "osm_features.geojson", driver="GeoJSON")
 
-    def test_regional_fetch_limits_overpass_to_visible_print_frame(self):
-        """A first-time regional download must not request invisible halo roads."""
+    def test_regional_fetch_covers_whole_printed_page(self):
+        """A first-time regional download covers the full page (ADR-004)."""
         args = self.args(True)
         test_boundary = gpd.GeoDataFrame(
             geometry=[self.boundary], crs="EPSG:4326"
@@ -101,12 +101,14 @@ class RegionalRenderTests(unittest.TestCase):
         project = Transformer.from_crs("EPSG:4326", crs, always_xy=True).transform
         city_metric = transform(project, self.boundary)
         queried_metric = transform(project, queried)
-        full_halo = city_metric.buffer(3000)
-        self.assertTrue(full_halo.buffer(0.01).covers(queried_metric))
+        _, page = regional_display_frame(city_metric, args.width, args.height)
+        # The whole page is fetched, plus no more than a small edge margin.
+        self.assertTrue(queried_metric.buffer(0.01).covers(page))
         self.assertTrue(queried_metric.buffer(0.01).covers(city_metric))
-        self.assertLess(queried_metric.area, full_halo.area * 0.8)
-        _, display_window = regional_display_frame(city_metric, args.width, args.height)
-        self.assertTrue(display_window.buffer(0.01).covers(queried_metric))
+        self.assertLess(queried_metric.area, page.area * 1.05)
+        # The page is far larger than the old 3 km halo would reach along
+        # the page's long side for this square city on landscape paper.
+        self.assertGreater(page.bounds[2] - page.bounds[0], (page.bounds[3] - page.bounds[1]) * 1.4)
 
     def test_city_only_and_regional_export_layers(self):
         for regional in (False, True):
@@ -127,28 +129,46 @@ class RegionalRenderTests(unittest.TestCase):
                     if regional:
                         self.assertIn("regional-context", nodes)
                         self.assertGreater(len(list(nodes["regional-context"])), 0)
-                        # The focus-city BBOX is centered and fills 78% of
-                        # the limiting page dimension, independent of its
-                        # much larger geographic buffer.
+                        # The focus-city BBOX is centered and fills 95% of
+                        # the limiting page dimension (ADR-004).
                         x0, y0, x1, y1 = group_coordinate_bounds(nodes["city-boundary"])
                         city_fraction = max((x1 - x0) / args.width, (y1 - y0) / args.height)
-                        self.assertAlmostEqual(city_fraction, 0.78, places=3)
+                        self.assertAlmostEqual(city_fraction, 0.95, places=3)
                         self.assertAlmostEqual((x0 + x1) / 2, args.width / 2, places=2)
                         self.assertAlmostEqual((y0 + y1) / 2, args.height / 2, places=2)
 
-                        # All surrounding paths stay within the inner 95%
-                        # print window, even though source data extends
-                        # beyond it. Context remains an independent SVG layer.
+                        # Surrounding paths fill the page up to its edges and
+                        # never beyond, although source data extends further.
+                        # Context remains an independent SVG layer.
                         cx0, cy0, cx1, cy1 = group_coordinate_bounds(nodes["regional-context"])
-                        self.assertGreaterEqual(cx0, args.width * 0.025 - 0.01)
-                        self.assertLessEqual(cx1, args.width * 0.975 + 0.01)
-                        self.assertGreaterEqual(cy0, args.height * 0.025 - 0.01)
-                        self.assertLessEqual(cy1, args.height * 0.975 + 0.01)
+                        self.assertGreaterEqual(cx0, -0.01)
+                        self.assertLessEqual(cx1, args.width + 0.01)
+                        self.assertGreaterEqual(cy0, -0.01)
+                        self.assertLessEqual(cy1, args.height + 0.01)
+                        self.assertAlmostEqual(cx0, 0.0, places=2)
                         # Focus boundary is visible and emphasized for regional output.
                         self.assertNotIn("display:none", nodes["city-boundary"].get("style", ""))
                     else:
                         self.assertNotIn("regional-context", nodes)
                         self.assertIn("display:none", nodes["city-boundary"].get("style", ""))
+                        # City-only maps also fill 95% of the page, centered.
+                        x0, y0, x1, y1 = group_coordinate_bounds(nodes["city-boundary"])
+                        city_fraction = max((x1 - x0) / args.width, (y1 - y0) / args.height)
+                        self.assertAlmostEqual(city_fraction, 0.95, places=3)
+                        self.assertAlmostEqual((x0 + x1) / 2, args.width / 2, places=2)
+                        self.assertAlmostEqual((y0 + y1) / 2, args.height / 2, places=2)
+
+    def test_explicit_margin_keeps_v22_city_only_layout(self):
+        args = self.args(False)
+        args.margin = 18
+        self.seed(args)
+        with patch.object(ox, "geocode_to_gdf", side_effect=AssertionError("Network geocoding")):
+            create_svg(args)
+        root = ET.parse(args.output).getroot()
+        boundary = next(n for n in root.iter() if n.get("id") == "city-boundary")
+        x0, y0, x1, y1 = group_coordinate_bounds(boundary)
+        # Limiting dimension spans the page minus both 18 mm margins.
+        self.assertAlmostEqual(max((x1 - x0) / (420 - 36), (y1 - y0) / (297 - 36)), 1.0, places=3)
 
 
 if __name__ == "__main__":

@@ -35,13 +35,14 @@ import geopandas as gpd  # noqa: E402
 from shapely.geometry import LineString, Polygon  # noqa: E402
 
 from cache_reuse import geographic_cache_folder  # noqa: E402
-from generate_city_map_v2_1 import create_svg  # noqa: E402
+from generate_city_map_v2_1 import create_svg, regional_cache_name  # noqa: E402
 
 CITY = "Synthetic"
 STATE = "Benchmark"
 COUNTRY = "USA"
 PLACE_KEY = f"{CITY}_Location_{STATE}_{COUNTRY}"  # empty county slugs to "Location"
 CENTER_LON, CENTER_LAT = -118.25, 34.05
+PAGE_WIDTH, PAGE_HEIGHT = 610, 914  # 24 x 36 inch portrait
 RADIUS_DEG = 0.12  # roughly 22 km across: a large city, not LA's full extent
 
 
@@ -98,7 +99,7 @@ def synthetic_features(grid: int, extent: float) -> gpd.GeoDataFrame:
 def seed_cache(cache_dir: Path, regional: bool, boundary: Polygon, grid: int) -> int:
     folder = geographic_cache_folder(cache_dir, PLACE_KEY, "overpass")
     if regional:
-        folder = folder / "regional_3000m"
+        folder = folder / regional_cache_name(PAGE_WIDTH, PAGE_HEIGHT)
     folder.mkdir(parents=True, exist_ok=True)
     gpd.GeoDataFrame(geometry=[boundary], crs="EPSG:4326").to_file(
         folder / "boundary.geojson", driver="GeoJSON"
@@ -114,7 +115,7 @@ def render_args(cache_dir: Path, output: Path, regional: bool, road_mode: str):
         style="detailed", road_mode=road_mode, include_paths=True,
         show_boundary=True, regional_context=regional, regional_buffer_km=3.0,
         show_rail=True, include_service=True, include_tracks=False,
-        include_underground_rail=False, width=610, height=914, margin=18,
+        include_underground_rail=False, width=PAGE_WIDTH, height=PAGE_HEIGHT, margin=None,
         road_stroke=None, boundary_stroke=None, refresh_data=False,
         overpass_timeout=300, cache_dir=cache_dir, extract_file=None,
         output=output,

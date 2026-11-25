@@ -114,6 +114,32 @@ const assert = require("node:assert/strict");
     assert.match(await page.locator("#mapMount").getAttribute("style"), /scale\(1\.25\)/);
     await page.locator("#zoomReset").click();
     assert.match(await page.locator("#mapMount").getAttribute("style"), /scale\(1\)/);
+    // Zoom slider: log2 scale, kept in step with the buttons.
+    await page.locator("#zoomSlider").fill("1");
+    assert.match(await page.locator("#mapMount").getAttribute("style"), /scale\(2\)/);
+    await page.locator("#zoomIn").click();
+    assert.equal(Number(await page.locator("#zoomSlider").inputValue()).toFixed(2), Math.log2(2.5).toFixed(2));
+    await page.locator("#zoomReset").click();
+    assert.equal(await page.locator("#zoomSlider").inputValue(), "0");
+
+    // Fast zoom preview: a bitmap is shown while zooming; the live SVG
+    // comes back when zoomed past the bitmap's sharp range.
+    await page.evaluate(() => { SNAPSHOT_MIN_PATHS = 0; reset(); scheduleSnapshot(); });
+    await page.waitForFunction(() => document.querySelector("#mapMount .map-snapshot"), null, { timeout: 20000 });
+    await page.locator("#zoomIn").click();
+    assert.equal(await page.locator("#mapMount .map-snapshot").isVisible(), true);
+    assert.equal(await page.locator("#mapMount svg").isVisible(), false);
+    const sharpUpTo = await page.evaluate(() => snapshot.sharpUpTo);
+    await page.evaluate((limit) => { while (scale <= limit) zoom(1.25); }, sharpUpTo);
+    await page.waitForFunction(() => getComputedStyle(document.querySelector("#mapMount svg")).display !== "none");
+    assert.equal(await page.locator("#mapMount .map-snapshot").isVisible(), false);
+    await page.locator("#zoomReset").click();
+    const svgDownload = page.waitForEvent("download", { timeout: 15000 });
+    await page.locator("#export").click();
+    const snapshotExport = fs.readFileSync(await (await svgDownload).path(), "utf8");
+    assert.doesNotMatch(snapshotExport, /<canvas/);
+    assert.match(snapshotExport, /city-boundary/);
+    await page.evaluate(() => { SNAPSHOT_MIN_PATHS = 20000; });
 
     // A generated or library map shows its own state, not Massachusetts.
     await page.evaluate(() => {

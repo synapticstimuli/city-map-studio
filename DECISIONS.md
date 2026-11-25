@@ -3,6 +3,64 @@
 Short records of significant technical decisions. Newest first. Each entry
 says what was decided, why, and how it is verified.
 
+## ADR-004: Full-page layout and bitmap zoom preview (v2.3)
+
+**Date:** 2026-11-25 · **Status:** accepted (layout change approved by Rod) · **Branch:** `claude/project-thread-l341wt`
+
+### Context
+Rod's exported Somerville Regional map showed the city at about 70% of the
+page height and the surroundings at about 85%: the generator placed the city
+at 78% and clipped surroundings to 95%, then the export fitted that artwork
+into 90% of the paper. Rod asked for the city to fill about 95% of the page,
+with Regional surroundings filling the whole page. He also found zooming the
+preview slow on large maps.
+
+### Decision: layout (replaces the v2.2 78% / 95% rule)
+- City-only and Regional: the city bounding box fills 95% of the limiting
+  page dimension, centered (`CITY_FILL`). `--margin <mm>` still gives the
+  v2.2 City-only layout on the command line.
+- Regional surroundings fill 100% of the page (`REGIONAL_OUTER_FILL`).
+  Surrounding streets are fetched for the whole page frame (+2% so lines reach
+  the edge after re-projection), no longer limited to 3 km. The
+  `regional_buffer_km` option stays in the API and cache keys for
+  compatibility but has no effect on the extent.
+- Regional geography is cached under `regional_fullpage_<W>x<H>mm`, so v2.2
+  `regional_3000m` caches (which do not reach the page edges) are not reused.
+  The finished-SVG renderer version is `city-map-studio-svg-v2.3-fullpage`,
+  so v2.2 SVGs are not served as cache hits for new requests; they stay in the
+  map library and still open.
+- Export fits the artwork to the paper at 100% (was 90%). On paper with the
+  same proportions as the generated page (A3 landscape today), Regional
+  surroundings reach the paper edges. On other proportions the artwork is
+  letterboxed; passing the chosen paper to the generator is a follow-up.
+- Trade-off: for a wide page around a tall city the page frame can exceed
+  the Overpass preflight limit (500 km²) where the 3 km halo did not; such
+  cities need a regional extract.
+
+### Decision: zoom preview
+Zooming or panning a live SVG with hundreds of thousands of paths makes the
+browser re-rasterize every path at each step. For maps with 20,000+ paths
+the preview now draws the styled map once into a bitmap (up to 6,000 px on
+the long side, up to 4x the on-screen size) and shows that while zooming and
+panning, which the GPU can scale and move without redrawing the map. The live
+SVG returns when zoomed past the bitmap's sharp range. The bitmap is rebuilt
+after style or page-size changes (300 ms debounce), from the original SVG
+text plus a CSS block for the current layer and line-weight settings, so the
+large SVG is not re-serialized. Export and styling still use the live SVG.
+Alternatives considered: server-rendered PNG tiles (needs a tile pipeline);
+simplified preview geometry (changes what is shown); CSS `will-change`
+alone (already set; Chrome still re-rasterizes on discrete scale changes).
+
+A zoom slider (log scale, 0.5x to 8x) was added under −/Fit/+.
+
+### Verification
+- `test_regional.py`: city at 95% (City-only and Regional), Regional context
+  spans to the page edge, full-page fetch, `--margin` keeps v2.2 layout.
+- Browser smoke test: snapshot shown while zooming, live SVG back past the
+  sharp range, export still pure SVG, zoom slider in step with the buttons.
+- Not verified: zoom smoothness on real hardware with a real LA map. A
+  headless browser cannot show GPU raster cost; Rod to try.
+
 ## ADR-003: Batch clipping and no svgwrite validation in the renderer (v2.3)
 
 **Date:** 2026-11-25 · **Status:** accepted · **Branch:** `claude/project-thread-l341wt`

@@ -42,9 +42,137 @@ function styleMap() {
   for (const k of ["road", "path", "rail"])
     $(k + "Value").textContent =
       Number($(k + "Width").value).toFixed(2) + " mm";
+  scheduleSnapshot();
 }
 function view() {
   $("mapMount").style.transform = `translate(${dx}px,${dy}px) scale(${scale})`;
+  // Slider position is log2 of the zoom factor: 0.5x .. 8x.
+  $("zoomSlider").value = Math.log2(scale);
+  previewDuringInteraction();
+}
+
+/* ==========================================
+   FAST ZOOM PREVIEW (bitmap snapshot)
+   ==========================================
+   Zooming or panning a live SVG with hundreds of thousands of paths makes
+   the browser re-rasterize every path on every step. Instead, the styled
+   map is drawn once into a high-resolution bitmap. While zooming or panning
+   the bitmap is shown and only moved/scaled by the GPU; the live SVG (which
+   is what gets styled and exported) is shown again only when the view is
+   zoomed in further than the bitmap's resolution can show sharply. */
+let SNAPSHOT_MIN_PATHS = 20000; // small maps stay live SVG all the time
+const SNAPSHOT_MAX_SIDE = 6000; // bitmap long side in pixels (memory cap)
+let svgSource = "";
+let snapshot = null; // { canvas, sharpUpTo }
+let snapshotTimer = null;
+let snapshotToken = 0;
+let settleTimer = null;
+
+function previewStyleSheet() {
+  // Current layer visibility and line weights as CSS, for the bitmap.
+  const rules = [];
+  for (const [control, id] of Object.entries(groups)) {
+    const display = $(control).checked ? "inline" : "none";
+    let rule = `[id="${id}"]{display:${display} !important;`;
+    if (control === "roads") rule += `stroke-width:${$("roadWidth").value} !important;`;
+    if (control === "paths") rule += `stroke-width:${$("pathWidth").value} !important;`;
+    if (control === "rail") rule += `stroke-width:${$("railWidth").value} !important;`;
+    rules.push(rule + "}");
+  }
+  return rules.join("");
+}
+
+function showSnapshot(visible) {
+  if (!svg || !snapshot) return;
+  snapshot.canvas.style.display = visible ? "block" : "none";
+  svg.style.display = visible ? "none" : "";
+}
+
+function previewDuringInteraction() {
+  if (!snapshot) return;
+  showSnapshot(true);
+  clearTimeout(settleTimer);
+  // Once zooming stops, return to the live SVG only if the bitmap would
+  // look soft at this zoom level.
+  settleTimer = setTimeout(() => {
+    if (snapshot && scale > snapshot.sharpUpTo) showSnapshot(false);
+  }, 400);
+}
+
+function scheduleSnapshot() {
+  clearTimeout(snapshotTimer);
+  snapshotTimer = setTimeout(buildSnapshot, 300);
+}
+
+async function buildSnapshot() {
+  const token = ++snapshotToken;
+  if (!svg || !svgSource) return;
+  if (svg.querySelectorAll("path").length < SNAPSHOT_MIN_PATHS) {
+    dropSnapshot();
+    return;
+  }
+  const mount = $("mapMount");
+  const ratio = window.devicePixelRatio || 1;
+  const box = mount.getBoundingClientRect();
+  const cssWidth = box.width / scale;
+  const cssHeight = box.height / scale;
+  if (!cssWidth || !cssHeight) return;
+  const supersample = Math.max(
+    1,
+    Math.min(4, SNAPSHOT_MAX_SIDE / (Math.max(cssWidth, cssHeight) * ratio)),
+  );
+  const pixelWidth = Math.round(cssWidth * ratio * supersample);
+  const pixelHeight = Math.round(cssHeight * ratio * supersample);
+  // Inject the current styling into the original SVG text; no need to
+  // re-serialize the (very large) live SVG document.
+  const tagEnd = svgSource.indexOf(">", svgSource.search(/<svg[\s>]/));
+  if (tagEnd < 0) return;
+  const styled =
+    svgSource.slice(0, tagEnd + 1) +
+    `<style>${previewStyleSheet()}</style>` +
+    svgSource.slice(tagEnd + 1);
+  const url = URL.createObjectURL(new Blob([styled], { type: "image/svg+xml" }));
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    if (token !== snapshotToken) return;
+    const canvas = document.createElement("canvas");
+    canvas.className = "map-snapshot";
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+    // Same placement as the live SVG (preserveAspectRatio "xMidYMid meet").
+    const viewBox = svg.viewBox.baseVal;
+    const aspect = viewBox && viewBox.width ? viewBox.width / viewBox.height : pixelWidth / pixelHeight;
+    const drawWidth = Math.min(pixelWidth, pixelHeight * aspect);
+    const drawHeight = drawWidth / aspect;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, pixelWidth, pixelHeight);
+    context.drawImage(
+      image,
+      (pixelWidth - drawWidth) / 2,
+      (pixelHeight - drawHeight) / 2,
+      drawWidth,
+      drawHeight,
+    );
+    if (token !== snapshotToken) return;
+    dropSnapshot();
+    snapshot = { canvas, sharpUpTo: supersample };
+    mount.appendChild(canvas);
+    showSnapshot(scale <= snapshot.sharpUpTo);
+  } catch (error) {
+    console.warn("Zoom preview unavailable; using live SVG.", error);
+    dropSnapshot();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function dropSnapshot() {
+  if (snapshot) snapshot.canvas.remove();
+  snapshot = null;
+  if (svg) svg.style.display = "";
 }
 function reset() {
   scale = 1;
@@ -67,6 +195,8 @@ async function loadCity() {
   $("mapSubtitle").textContent = mapSubtitle(selected);
   $("export").disabled = true;
   $("mapMount").innerHTML = '<div class="loading">Loading ' + city + "…</div>";
+  snapshotToken++;
+  snapshot = null;
   svg = null;
   reset();
   setStatus("Loading " + city + " map...");
@@ -75,6 +205,7 @@ async function loadCity() {
     if (!resp.ok) throw Error("HTTP " + resp.status);
     let source = await resp.text();
     if (token !== request) return;
+    svgSource = source;
     let doc = new DOMParser().parseFromString(source, "image/svg+xml");
     if (doc.querySelector("parsererror")) throw Error("Invalid SVG");
     let node = doc.documentElement;
@@ -140,6 +271,10 @@ function zoom(factor) {
 $("zoomIn").onclick = () => zoom(1.25);
 $("zoomOut").onclick = () => zoom(0.8);
 $("zoomReset").onclick = reset;
+$("zoomSlider").addEventListener("input", (e) => {
+  scale = Math.max(0.5, Math.min(8, 2 ** Number(e.target.value)));
+  view();
+});
 $("canvas").addEventListener(
   "wheel",
   (e) => {
@@ -187,9 +322,10 @@ $("export").onclick = () => {
   const sourceWidth = sourceViewBox.width;
   const sourceHeight = sourceViewBox.height;
 
-  // Initial uniform fit: preserve aspect ratio.
-  // The map occupies up to 90% of the page.
-  const marginFactor = 0.9;
+  // Uniform fit, preserving aspect ratio. Generated maps already place the
+  // city at 95% of their page and Regional surroundings to its edges
+  // (ADR-004), so the artwork is not shrunk further here.
+  const marginFactor = 1.0;
 
   const fitScale = Math.min(
     (width * marginFactor) / sourceWidth,
@@ -372,6 +508,7 @@ function updatePrintPreview() {
 
   // Recenter and fit the preview.
   reset();
+  scheduleSnapshot();
 }
 
 window.addEventListener("resize", updatePrintPreview);

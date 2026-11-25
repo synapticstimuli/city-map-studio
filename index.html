@@ -52,7 +52,7 @@
             Map extent
             <select id="genScope">
               <option value="city">City-only</option>
-              <option value="regional">Regional (3 km surroundings)</option>
+              <option value="regional">Regional (fills the page)</option>
             </select>
           </label>
 
@@ -193,10 +193,22 @@
             <strong id="mapTitle">Somerville</strong
             ><span id="mapSubtitle">Massachusetts · vector artwork</span>
           </div>
-          <div class="zoom">
-            <button id="zoomOut" aria-label="Zoom out">−</button
-            ><button id="zoomReset" aria-label="Reset zoom">Fit</button
-            ><button id="zoomIn" aria-label="Zoom in">+</button>
+          <div class="zoom-controls">
+            <div class="zoom">
+              <button id="zoomOut" aria-label="Zoom out">−</button
+              ><button id="zoomReset" aria-label="Reset zoom">Fit</button
+              ><button id="zoomIn" aria-label="Zoom in">+</button>
+            </div>
+            <input
+              id="zoomSlider"
+              type="range"
+              min="-1"
+              max="3"
+              step="0.01"
+              value="0"
+              aria-label="Zoom level"
+              title="Zoom"
+            />
           </div>
         </header>
         <div class="canvas" id="canvas">

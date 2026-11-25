@@ -27,9 +27,12 @@ If you have an older local server running, stop that first to avoid port conflic
 - Style presets, paper sizes, portrait/landscape preview, and editable SVG export.
 - Local saved-map library, queue positions, live generator stage details,
   and diagnostic logs.
-- City-only and Regional print modes: 78% focus-city fill, with context
-  clipped to a 95% page window on a separate SVG layer. Regional fetching
-  is reduced to the print-visible area when the geographic cache is cold.
+- City-only and Regional print modes: the city fills 95% of the page; in
+  Regional mode the surroundings fill the whole page on a separate SVG
+  layer, fetched for exactly the printed page area (ADR-004).
+- Fast zoom: large maps are previewed as a sharp bitmap while zooming and
+  panning; the vector SVG is still what gets styled and exported. A zoom
+  slider sits under the −/Fit/+ buttons.
 
 ## Optional large-city data
 

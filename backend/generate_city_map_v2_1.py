@@ -27,6 +27,7 @@ import geopandas as gpd
 import numpy as np
 import osmnx as ox
 import shapely
+import shapely.affinity
 import svgwrite
 from pyproj import Transformer
 from shapely.geometry import (
@@ -57,12 +58,14 @@ INCLUDE_UNDERGROUND_RAIL = False
 OVERPASS_TIMEOUT_SECONDS = 300
 PAGE_WIDTH_MM = 420
 PAGE_HEIGHT_MM = 297
-MARGIN_MM = 18
-
-# Regional print composition: the focus-city bounding box occupies at most
-# 78% of the page in its limiting dimension; surroundings clip to 95%.
-REGIONAL_FOCUS_FILL = 0.78
-REGIONAL_OUTER_FILL = 0.95
+# v2.3 print composition (ADR-004, approved by Rod 2026-11-25): the city's
+# bounding box fills 95% of the page in its limiting dimension, centered, in
+# both modes. Regional surroundings fill the whole page. (v2.2: 78% / 95%.)
+CITY_FILL = 0.95
+REGIONAL_FOCUS_FILL = CITY_FILL
+REGIONAL_OUTER_FILL = 1.00
+# Optional fixed margin in mm for City-only maps (v2.2 behaviour, --margin).
+MARGIN_MM = None
 
 # Line widths are SVG output units, i.e. millimeters given our SVG viewBox.
 STYLES = {
@@ -196,11 +199,12 @@ def iter_outlines(geom):
 
 
 def regional_display_frame(boundary_xy, page_width, page_height):
-    """Return city-based scale and the projected 95%-of-page display window.
+    """Return city-based scale and the projected visible page window.
 
     The city's bounding box is exactly centered; its limiting dimension
-    occupies 78% of the paper. Geographic fetching and rendering use the
-    identical frame to avoid downloading invisible streets.
+    occupies REGIONAL_FOCUS_FILL (95%) of the paper, and the window covers
+    REGIONAL_OUTER_FILL (100%) of the page. Geographic fetching and rendering
+    use the identical frame (ADR-004).
     """
     xmin, ymin, xmax, ymax = boundary_xy.bounds
     city_width, city_height = xmax - xmin, ymax - ymin
@@ -340,6 +344,11 @@ def road_index_dir(cache_dir):
     return Path(cache_dir) / "_extract_index"
 
 
+def regional_cache_name(width, height):
+    """Geographic cache subfolder for full-page Regional maps (ADR-004)."""
+    return f"regional_fullpage_{width:g}x{height:g}mm"
+
+
 def load_geodata(args):
     """Download once per place, or reuse human-readable GeoJSON files."""
     started_at = time.perf_counter()
@@ -359,7 +368,10 @@ def load_geodata(args):
     source_key = source_identity(args.extract_file)
     folder = geographic_cache_folder(args.cache_dir, key, source_key)
     if args.regional_context:
-        folder = folder / f"regional_{int(round(args.regional_buffer_km * 1000))}m"
+        # Full-page regional geography (ADR-004) depends on the page shape,
+        # and never reuses v2.2 "regional_3000m" halo caches, which do not
+        # reach the page edges.
+        folder = folder / regional_cache_name(args.width, args.height)
     boundary_file = folder / "boundary.geojson"
     features_file = folder / "osm_features.geojson"
     if not args.refresh_data and boundary_file.exists() and features_file.exists():
@@ -397,20 +409,19 @@ def load_geodata(args):
             raise RuntimeError("Could not estimate projection for surrounding region")
         project_local = Transformer.from_crs("EPSG:4326", local_crs, always_xy=True).transform
         project_geographic = Transformer.from_crs(local_crs, "EPSG:4326", always_xy=True).transform
-        # Buffer in meters using a local metric projection, not latitude degrees.
+        # Fetch exactly the streets that can appear on the page: the whole
+        # printed page frame around the centered city (ADR-004). The
+        # --regional-buffer-km option no longer limits this; it is kept for
+        # API and cache-key compatibility.
         city_metric = transform(project_local, boundary)
-        halo_metric = city_metric.buffer(args.regional_buffer_km * 1000)
         _, print_frame = regional_display_frame(city_metric, args.width, args.height)
-        # Only acquire streets that can actually be shown on the page.
-        # Never broaden the configured geographic buffer.
-        useful_metric = halo_metric.intersection(print_frame)
-        if useful_metric.is_empty:
-            raise RuntimeError("Regional print frame does not intersect city buffer")
+        # 2% extra so streets still reach the page edge after the frame is
+        # re-projected to longitude/latitude; rendering clips to the page.
+        useful_metric = shapely.affinity.scale(print_frame, 1.02, 1.02).union(city_metric)
         query_geometry = transform(project_geographic, useful_metric)
         print(
-            f"Regional context: {args.regional_buffer_km:g} km source buffer; "
-            f"printing-area query {useful_metric.area / 1_000_000:.1f} km2 "
-            f"of {halo_metric.area / 1_000_000:.1f} km2 possible",
+            f"Regional context: full page frame, "
+            f"query {useful_metric.area / 1_000_000:.1f} km2",
             flush=True,
         )
 
@@ -512,7 +523,7 @@ def create_svg(args):
         )
         context_ring_xy = display_window_xy.difference(boundary_xy)
         # Frame conversion: the focus-city bounding box center maps to the
-        # exact page center, with surroundings remaining inside 95% bounds.
+        # exact page center; surroundings fill the page.
         xmin = focus_cx - width / (2 * scale)
         ymax = focus_cy + height / (2 * scale)
         left = top = 0.0
@@ -521,8 +532,14 @@ def create_svg(args):
             f"outer context clipped to {REGIONAL_OUTER_FILL:.0%} of page",
             flush=True,
         )
+    elif args.margin is None:
+        # City fills 95% of the page in its limiting dimension (ADR-004).
+        scale = CITY_FILL * min(width / (xmax - xmin), height / (ymax - ymin))
+        left = (width - (xmax - xmin) * scale) / 2
+        top = (height - (ymax - ymin) * scale) / 2
+        context_ring_xy = None
     else:
-        # Preserve City-only print layout and historical margin behaviour.
+        # Explicit --margin: the v2.2 City-only layout.
         scale = min(
             (width - 2 * args.margin) / (xmax - xmin),
             (height - 2 * args.margin) / (ymax - ymin),
@@ -818,11 +835,11 @@ def main():
         parser.error("--regional-buffer-km must be between 0.5 and 10 km")
     if args.overpass_timeout <= 0:
         parser.error("--overpass-timeout must be positive")
-    if (
+    if args.width <= 0 or args.height <= 0 or (args.margin is not None and (
         args.margin < 0
         or args.width <= 2 * args.margin
         or args.height <= 2 * args.margin
-    ):
+    )):
         parser.error("Invalid paper dimensions or margins")
     if args.road_stroke is not None and args.road_stroke <= 0:
         parser.error("--road-stroke must be positive")

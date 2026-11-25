@@ -1,13 +1,13 @@
-# Regional map mode (v2.2 preview)
+# Regional map mode (v2.3)
 
-**City-only** remains the default. **Regional** adds a 3 km outer context
-around the selected municipality. The focused city keeps dark primary lines,
+**City-only** remains the default. **Regional** fills the rest of the page
+around the selected municipality with its surrounding streets. The focused city keeps dark primary lines,
 and surrounding roads/paths/railways are drawn in a muted grey.
 
 ## How to use
 
 1. Start the application locally using `Run City Map Studio.cmd`.
-2. Under **Generate a new city → Map extent**, choose **Regional (3 km surroundings)**.
+2. Under **Generate a new city → Map extent**, choose **Regional (surroundings)**.
 3. Enter city, state, optional county, and country; select a road mode.
 4. Generate the map. The surrounding network appears on a separate editable
    SVG group named `regional-context`.
@@ -22,18 +22,16 @@ and surrounding roads/paths/railways are drawn in a muted grey.
 
 ## Print framing — focus first
 
-Regional mode now uses two separate extents:
+v2.3 layout (ADR-004, replacing the v2.2 78% / 95% layout):
 
-- **Acquisition extent:** the existing 3 km buffer determines which outside
-  streets are loaded (and retains the same bounded Overpass safeguards).
 - **Display extent:** the *city boundary bounding box* sets the page scale,
-  centered exactly on the paper. The city fills 78% of the limiting page
-  dimension without stretching; all visible surroundings are clipped to the
-  centered 95%-of-page window.
-
-For a **cold** geographic cache, the Overpass query is further trimmed
-to the intersection of the configured 3 km buffer and the visible print
-frame. Streets that cannot appear on the page are not requested. This
+  centered exactly on the paper. The city fills 95% of the limiting page
+  dimension without stretching (City-only maps too). Surroundings fill the
+  whole page and are clipped at its edges.
+- **Acquisition extent:** exactly the printed page area (plus 2% so streets
+  reach the edge), whatever the distance. Streets that cannot appear on the
+  page are not requested. The old 3 km buffer setting is still accepted by
+  the API and CLI but no longer limits the surroundings. This
 reduces unnecessary downloaded geography, especially for small cities with
 large buffered surroundings. Previously cached full-region data remains
 valid and may still be reused. Download speed is affected by Overpass server
@@ -45,12 +43,12 @@ job's log under `backend/generated_maps`.
 
 The page frame is intentionally distinct from the data buffer: neither
 the size nor shape of the surrounding query can shrink the focus city.
-At extreme city aspect ratios the city may occupy less than 78% in the
-other dimension (preserving geographic proportions). If the 3 km buffer
-does not supply streets all the way to the print-window edge, the context
-will naturally stop before 95%, rather than fabricate streets.
-
-The City-only layout and its original paper margins remain unchanged.
+At extreme city aspect ratios the city may occupy less than 95% in the
+other dimension (preserving geographic proportions). For a wide page around
+a tall city the page can reach far beyond the city: for Overpass downloads
+the usual 500 km² preflight limit then applies, and large cities need a
+regional extract. The v2.2 City-only margins are available with
+`--margin <mm>` on the command line.
 Regional exports still preserve the independent `regional-context` group.
 
 ## Design and safety
