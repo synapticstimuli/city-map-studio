@@ -3,6 +3,79 @@
 Short records of significant technical decisions. Newest first. Each entry
 says what was decided, why, and how it is verified.
 
+## ADR-002: Reusable road index for regional OSM extracts (v2.3)
+
+**Date:** 2026-11-25 · **Status:** accepted · **Branch:** `claude/project-thread-l341wt`
+
+### Context
+After ADR-001, a cached LA map takes about 45 s, but a city that is not yet
+cached still pays for a full scan of the regional extract: 180 to 216 s for LA
+from `socal-latest.osm.pbf`. v2.2 rescanned the whole extract for every new
+city, and again for each mode with its own geographic cache (City-only and
+Regional are cached separately). Profiling a synthetic 60 MB / 5 M-way
+extract showed that about 80% of the scan was Python work per way and per
+node (tag lookups, coordinate lists, envelope checks), not PBF decoding.
+
+### Decision
+1. **Leaner scan** (`scan_extract`): pyosmium filters ways by tag key in C++
+   (`EntityFilter`, `KeyFilter`), builds each way's geometry with its WKB
+   factory (`use_nodes.ALL`, so repeated nodes are kept exactly as before), and
+   hands ways over in chunks of 250,000 so memory stays bounded. Clipping is
+   vectorized and uses the ADR-001 fast path.
+2. **Road index** (`build_index` / `read_index`): the first scan of an extract
+   also writes every matching way, unclipped, with its tags and original file
+   position (`seq`), to spatially indexed FlatGeobuf part files in
+   `map_data_cache/_extract_index/roads-v1-<key>/`. Later requests read only
+   the ways whose envelope meets the requested area and process them in `seq`
+   order.
+   - The key covers the index version, extract path, size and nanosecond
+     mtime (same identity rule as the geographic cache) and the rendered tag
+     set, so a new extract or tag set gets a new index.
+   - Parts are written to a temporary folder and renamed into place after a
+     `complete.json` marker is written. An interrupted build leaves nothing
+     usable behind; an unreadable index is deleted and the extract scanned.
+   - If the index cannot be written (disk full, permissions), the map is still
+     made from a plain scan.
+   - `OSM_ROAD_INDEX=0` turns the index off and restores v2.2 behaviour.
+
+FlatGeobuf was chosen because pyogrio/GDAL (already installed) write and read
+it with a spatial index, it stores full double precision, and it opens in
+QGIS for inspection. No new dependency is needed.
+
+### Compatibility
+- Imported features are identical to v2.2: same ways, order, tags, missing-
+  value markers and coordinates, through scan, index build and index reuse
+  (`backend/tests/test_road_index.py` compares against a frozen copy of the
+  v2.2 importer on a synthetic region and an edge-case file with a missing
+  node, repeated nodes, a one-node way and unrendered types). Since the
+  renderer is unchanged, SVGs are unchanged too.
+- `extract_features()` keeps its signature; `index_dir` is a new optional
+  argument. Without it (as in `benchmark_extract.py`) it scans as before.
+- No API, CLI, geographic cache or SVG cache changes.
+
+### Costs
+- The first map from an extract is about 10% slower than v2.2 on the
+  benchmark, because it also writes the index.
+- Disk: the index is several times larger than the matching ways' share of
+  the PBF (327 MB for the synthetic 60 MB extract, which is road-heavy).
+  Expect roughly 0.5 to 1.5 GB for Southern California; this is an estimate,
+  not a measurement. Old indexes are not deleted automatically when an
+  extract is replaced; delete `_extract_index` to reclaim space.
+- Peak memory on the benchmark: about 520 MB versus 364 MB for v2.2.
+
+### Evidence (synthetic, Linux, 4 vCPU, Python 3.13)
+`backend/synthetic_pbf.py --grid 1000 --buildings 3000000`: 60 MB PBF,
+15 M nodes, 5 M ways (2 M roads); city box with 30,304 clipped ways.
+
+| Import | Time | Result |
+|---|---|---|
+| v2.2 full scan | 23.4 to 25.4 s | reference |
+| v2.3 scan, no index | 18.0 s | identical |
+| v2.3 first map (scan + build index) | 25.5 to 26.4 s | identical |
+| v2.3 later maps (index reuse) | 0.4 to 0.5 s | identical |
+
+Real SoCal timings still have to be measured on Rod's PC.
+
 ## ADR-001: Faster per-way clipping and projection in the SVG renderer (v2.3)
 
 **Date:** 2026-11-24 · **Status:** accepted · **Branch:** `claude/project-thread-l341wt` (off `feature/on-demand-maps`)
@@ -82,6 +155,7 @@ runs read existing cached geography, so there is no PBF import.
 ### Not addressed (next candidates)
 - PBF import (`feature_retrieval_seconds`, 179.9 s for LA, 53% of the run):
   full scan of the regional extract with an in-memory location index.
+  Addressed by ADR-002.
 - Outline mode's single `unary_union` of all road polygons (now the largest
   remaining cost in outline mode on the benchmark).
 - GeoJSON geographic cache read/write (~13 s inferred for LA).

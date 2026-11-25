@@ -11,6 +11,7 @@ centerlines, NOT surveyed curb/roadway edges. Cached GeoJSON is local data.
 """
 
 import argparse
+import os
 import re
 from pathlib import Path
 import time
@@ -301,6 +302,18 @@ def fetch_features_with_retry(boundary, tags, max_attempts=4):
             time.sleep(delay)
 
 
+def road_index_dir(cache_dir):
+    """Where reusable regional-extract road indexes live (ADR-002).
+
+    Set OSM_ROAD_INDEX=0 to disable them and scan the extract every time,
+    as v2.2 did. The leading underscore cannot collide with a place folder,
+    because place keys are slugs.
+    """
+    if os.getenv("OSM_ROAD_INDEX", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return None
+    return Path(cache_dir) / "_extract_index"
+
+
 def load_geodata(args):
     """Download once per place, or reuse human-readable GeoJSON files."""
     started_at = time.perf_counter()
@@ -379,7 +392,8 @@ def load_geodata(args):
         # Explicit opt-in; no Overpass queries when a local extract is selected.
         from osm_extract import extract_features
         features = extract_features(
-            args.extract_file, query_geometry, STREET_TYPES | PATH_TYPES, RAIL_TYPES
+            args.extract_file, query_geometry, STREET_TYPES | PATH_TYPES, RAIL_TYPES,
+            index_dir=road_index_dir(args.cache_dir),
         )
     else:
         ox.settings.requests_timeout = args.overpass_timeout

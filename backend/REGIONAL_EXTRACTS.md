@@ -76,6 +76,22 @@ changing a file while preserving path, size and timestamp may escape detection.
 The backend also verifies that the fingerprint has not changed while a job
 runs, and discards the result if it has.
 
+## Road index (v2.3)
+
+The first map made from an extract scans the whole file once and saves a
+road index next to the geographic cache, in
+`map_data_cache/_extract_index/roads-v1-<key>/`. Every later map from the
+same unchanged extract, including other cities and Regional mode, reads only
+the nearby roads from that index, which takes about a second instead of a
+full scan. The imported roads are identical either way.
+
+- Replacing or touching the extract (new size or modification time) creates a
+  new index; delete old `roads-v1-*` folders to reclaim disk space.
+- The index can take around a gigabyte for a large region.
+- Set `OSM_ROAD_INDEX=0` before starting the app to turn it off.
+
+See `DECISIONS.md`, ADR-002.
+
 ## Reproducible importer benchmark
 
 The standalone benchmark consumes **only local files** and does not call
