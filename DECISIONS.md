@@ -41,7 +41,16 @@ match the v2.2 hashes. No API, CLI, cache or SVG-structure changes.
 Regional centerline 3.7 s -> 1.8 s (v2.2: 13.7 s and 18.4 s). An LA-like
 synthetic city (20,000-vertex boundary with 12 enclaves), Regional
 centerline: 10.5 s -> 5.4 s. Outline mode is dominated by the buffered-road
-union and is unchanged. Real LA Regional timing on Rod's PC: pending.
+union and is unchanged.
+
+### Evidence (real LA, Rod's PC, render only, cached geography, 2026-11-25)
+| Mode | v2.2 `77b4979` | ADR-001 `1b5d070` | ADR-003 `4340098` | SVG SHA-256 |
+|---|---|---|---|---|
+| Regional centerline | 353.9 s | 74.5 s | 26.7 / 25.0 s | `fa001ab2...` (same as job baf30773) |
+| City-only centerline | 145.0 / 141.9 s | 34-38 s | 14.1 s | `8ab52b0f...` (same as v2.2) |
+
+Reading the cached GeoJSON adds 11-12 s (Regional) and 7.6 s (City-only), now
+a large share of a cached run. Not measured here: outline mode, memory.
 
 ## ADR-002: Reusable road index for regional OSM extracts (v2.3)
 
