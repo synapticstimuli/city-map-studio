@@ -57,8 +57,27 @@ exactly.
 | Regional centerline | 18.4 s | 3.7 s | 5.0x |
 | Regional outline | 23.1 s | 5.2 s | 4.4x |
 
-These are synthetic numbers. The real LA gain still has to be measured on
-Rod's machine; it is not claimed here.
+These are synthetic numbers. Real-data LA numbers follow.
+
+### Evidence (real LA data, Rod's Windows PC, Python 3.12, 2026-11-24)
+Los Angeles from `socal-latest.osm.pbf`: City-only, Fine, centerline, paths
+on, boundary hidden; 269,130 ways. `77b4979` (v2.2) versus `f9ffbd3`. Cached
+runs read existing cached geography, so there is no PBF import.
+
+| Stage | v2.2 full (job 5dfd433e) | v2.2 cached (2 runs) | `f9ffbd3` cached (2 runs) | `f9ffbd3` full (1 run) |
+|---|---|---|---|---|
+| PBF import | 179.9 s | skipped | skipped | 215.8 s |
+| Cache write / read | about 13 s (write) | 7.1 / 7.0 s (read) | 7.8 / 7.2 s (read) | about 12 s (write) |
+| SVG rendering | 146.9 s | 145.0 / 141.9 s | 35.7 / 35.5 s | 37.9 s |
+| Generator total | 340.1 s | 152.1 / 148.9 s | 43.5 / 42.7 s | 265.7 s |
+
+- Rendering is about 4x faster; the cached total is about 3.5x faster.
+- All five benchmark SVGs and the original job SVG share SHA-256
+  `8ab52b0fdf118cd884cb70616f20ab65c90e3732f20a6bbdfdd479e31ec22765`.
+- This change does not touch the import code. The slower import in the single
+  full run was not investigated, so the 340.1 s versus 265.7 s totals are not
+  a controlled comparison.
+- Not measured on real data: outline mode, Regional mode, other cities, memory.
 
 ### Not addressed (next candidates)
 - PBF import (`feature_retrieval_seconds`, 179.9 s for LA, 53% of the run):
