@@ -344,6 +344,54 @@ def road_index_dir(cache_dir):
     return Path(cache_dir) / "_extract_index"
 
 
+FEATURES_CACHE_NAME = "osm_features.fgb"
+LEGACY_FEATURES_CACHE_NAME = "osm_features.geojson"
+
+
+def write_cached_features(features, path):
+    """Write the feature cache as FlatGeobuf (ADR-005).
+
+    FlatGeobuf stores coordinates as exact doubles and writes/reads several
+    times faster than GeoJSON. The file is written under a temporary name and
+    renamed, so an interrupted run never leaves a half-written cache behind.
+    """
+    path = Path(path)
+    partial = path.with_name(path.stem + ".partial.fgb")
+    try:
+        features.to_file(partial, driver="FlatGeobuf", index=False,
+                         engine="pyogrio", SPATIAL_INDEX="NO")
+        os.replace(partial, path)
+    finally:
+        partial.unlink(missing_ok=True)
+
+
+def read_cached_features(folder):
+    """Cached features for ``folder``, or None when there is no usable cache.
+
+    Prefers ``osm_features.fgb``. A cache written by v2.2-v2.3 as
+    ``osm_features.geojson`` is still read, then also saved as FlatGeobuf so
+    later runs read it fast; the GeoJSON is kept for older app versions. A
+    damaged FlatGeobuf is removed and the next best source is used.
+    """
+    folder = Path(folder)
+    fast = folder / FEATURES_CACHE_NAME
+    legacy = folder / LEGACY_FEATURES_CACHE_NAME
+    if fast.is_file():
+        try:
+            return gpd.read_file(fast, engine="pyogrio")
+        except Exception as exc:  # damaged or truncated file
+            print(f"Ignoring unreadable feature cache {fast}: {exc}", flush=True)
+            fast.unlink(missing_ok=True)
+    if legacy.is_file():
+        features = gpd.read_file(legacy)
+        try:
+            write_cached_features(features, fast)
+        except Exception as exc:  # read-only or full disk: legacy cache still works
+            print(f"Could not convert feature cache to FlatGeobuf: {exc}", flush=True)
+        return features
+    return None
+
+
 def regional_cache_name(width, height):
     """Geographic cache subfolder for full-page Regional maps (ADR-004)."""
     return f"regional_fullpage_{width:g}x{height:g}mm"
@@ -373,13 +421,14 @@ def load_geodata(args):
         # reach the page edges.
         folder = folder / regional_cache_name(args.width, args.height)
     boundary_file = folder / "boundary.geojson"
-    features_file = folder / "osm_features.geojson"
-    if not args.refresh_data and boundary_file.exists() and features_file.exists():
-        print(f"Using cached geographic data: {folder}")
-        cached_boundary = gpd.read_file(boundary_file)
-        cached_features = gpd.read_file(features_file)
-        print(f"STAGE geographic_cache_read_seconds={time.perf_counter()-started_at:.2f}", flush=True)
-        return cached_boundary, cached_features
+    features_file = folder / FEATURES_CACHE_NAME
+    if not args.refresh_data and boundary_file.exists():
+        cached_features = read_cached_features(folder)
+        if cached_features is not None:
+            print(f"Using cached geographic data: {folder}")
+            cached_boundary = gpd.read_file(boundary_file)
+            print(f"STAGE geographic_cache_read_seconds={time.perf_counter()-started_at:.2f}", flush=True)
+            return cached_boundary, cached_features
 
     query = location_query(args)
     boundary_started_at = time.perf_counter()
@@ -467,6 +516,9 @@ def load_geodata(args):
     features = features.to_crs("EPSG:4326")
     folder.mkdir(parents=True, exist_ok=True)
     boundary_gdf[["geometry"]].to_file(boundary_file, driver="GeoJSON", index=False)
+    # Draw with the boundary exactly as cached runs will read it back
+    # (GeoJSON rounds coordinates), so the first map matches later ones.
+    boundary_gdf = gpd.read_file(boundary_file)
     # Keep only relevant tags to avoid fragile OSM object/list field serialization.
     fields = [
         c
@@ -495,7 +547,7 @@ def load_geodata(args):
                 else None
             )
         )
-    clean.to_file(features_file, driver="GeoJSON", index=False)
+    write_cached_features(clean, features_file)
     print(f"Cached geographic data: {folder}")
     print(f"STAGE geographic_total_seconds={time.perf_counter()-started_at:.2f}", flush=True)
     return boundary_gdf, clean

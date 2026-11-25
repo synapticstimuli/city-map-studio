@@ -53,7 +53,7 @@ to Overpass.
 - The existing cache is checked **before** the extract. To benchmark extracts,
   use a fresh cache directory; do not overwrite existing maps inadvertently.
 - Changes to an extract don't automatically replace existing geographic
-  GeoJSON cache entries. A controlled refresh is needed to retrieve new data.
+  cache entries (`osm_features.fgb`, or `osm_features.geojson` from v2.2). A controlled refresh is needed to retrieve new data.
 - This does not introduce external API authentication, hosted durable storage,
   or multiuser service quotas. Public generation remains disabled.
 

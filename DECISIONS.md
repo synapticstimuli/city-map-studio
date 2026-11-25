@@ -3,6 +3,54 @@
 Short records of significant technical decisions. Newest first. Each entry
 says what was decided, why, and how it is verified.
 
+## ADR-005: FlatGeobuf geographic feature cache (v2.3)
+
+**Status:** accepted 2026-11-25 (Rod chose this option; surroundings unchanged).
+
+### Context
+The first full-page LA Regional run (job f3ee4a5d, 887,361 ways) spent about
+41 s writing `osm_features.geojson`, and a cached Regional run spends about
+10 s reading it back. GeoJSON is text: every coordinate is formatted and
+parsed, and coordinates are rounded on the way out.
+
+### Decision
+- New feature caches are written as `osm_features.fgb` (FlatGeobuf through
+  pyogrio, no spatial index because the whole file is always read). No new
+  dependency: pyogrio/GDAL is already required and the road index (ADR-002)
+  uses the same format.
+- The file is written as `osm_features.partial.fgb` and renamed, so an
+  interrupted run never leaves a half-written cache.
+- Reads prefer `osm_features.fgb`. **Backward compatible:** a folder that only
+  has a v2.2/v2.3 `osm_features.geojson` is still read, then also saved as
+  `.fgb` (best effort; a read-only or full disk just keeps using GeoJSON). The
+  GeoJSON is left in place for older app versions. An unreadable `.fgb` is
+  deleted and the GeoJSON, or a fresh fetch, is used instead.
+- `boundary.geojson` stays GeoJSON (small, and reused across sources).
+- Fix found by the new test: the run that builds the cache drew with the
+  in-memory boundary, while every later run drew with the rounded GeoJSON copy,
+  so outline-mode maps from the first run differed slightly from later runs.
+  The first run now reads the boundary back from `boundary.geojson`, so a map
+  is identical whether or not its geography was cached.
+
+### Evidence (synthetic, 721,206 ways, this container)
+| | GeoJSON | FlatGeobuf |
+|---|---|---|
+| Write | 11.0 s | 2.0 s |
+| Read | 9.4 s | 2.4 s |
+| File size | 220 MB | 88 MB |
+| Coordinates after read | rounded | exact |
+
+Real LA timings are still to be measured on Rod's PC (expected: cache write
+about 41 s to under 10 s; cached read about 10 s to about 3 s).
+
+### Verification
+`backend/tests/test_feature_cache.py`: a cold run (synthetic PBF) and the
+cached run after it give byte-identical SVGs in all four modes; a legacy
+GeoJSON cache renders the same bytes as v2.3 did, is converted once, and the
+converted cache renders the same bytes again; round trip keeps tag values and
+exact coordinates; interrupted writes, damaged files and read-only folders
+fall back safely. Full suite: 54 tests pass.
+
 ## ADR-004: Full-page layout and bitmap zoom preview (v2.3)
 
 **Date:** 2026-11-25 · **Status:** accepted (layout change approved by Rod) · **Branch:** `claude/project-thread-l341wt`
